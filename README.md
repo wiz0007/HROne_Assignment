@@ -1,26 +1,100 @@
-# Candidate kit
+# Employee Attendance & Analytics API (HROne Assignment)
 
-Read in this order:
+Backend service built with FastAPI, PyMongo, and MongoDB following the Contract v2.0 specification.
 
-1. `PROBLEM_STATEMENT.docx`: what you are asked to do, how it is evaluated.
-2. `openapi.yaml`: the API contract and the business rules (R1 - R10).
-3. `DATA_MODEL.md`: what is stored in MongoDB, with nine sample documents.
-4. `app/main.py`: the starter. Put **all** your code in this one file. It must start with `uvicorn app.main:app --port 8000`.
-5. `REVIEW.md`, `DECISIONS.md`: templates to fill in.
+---
 
-`sample_data/` holds the nine sample documents as MongoDB Extended JSON; `sample_seed.py` loads them. The grader's dataset is
-much larger and contains cases they do not show.
+## 1. Prerequisites & Environment
 
-## Local setup
+- **Python**: 3.11+ (Tested on Python 3.14)
+- **MongoDB**: MongoDB Server 6.0+ (Tested on MongoDB Server 8.x / 7.x locally on port `27017`)
+
+---
+
+## 2. Setup & Installation
+
+### Virtual Environment Setup
+
 ```bash
-python -m venv .venv && source .venv/bin/activate
+# Create virtual environment
+python -m venv .venv
+
+# Activate virtual environment
+# Windows (PowerShell):
+.\.venv\Scripts\Activate.ps1
+# Linux / macOS:
+source .venv/bin/activate
+
+# Install dependencies
 pip install -r requirements.txt
-cp .env.example .env            # set MONGO_URI / MONGO_DB (local docker: docker run -p 27017:27017 mongo:7)
+```
+
+### Environment Configuration
+
+Copy the example environment file:
+
+```bash
+cp .env.example .env
+```
+
+`.env` configuration example:
+
+```env
+MONGO_URI=mongodb://localhost:27017
+MONGO_DB=attendance_dev
+```
+
+*Note: `.env` is ignored by Git. Never commit real credentials.*
+
+### Database Initialization
+
+To seed the development database with the 9 sample reference documents:
+
+```bash
 python sample_seed.py
+```
+
+---
+
+## 3. Running the Application
+
+Start the development server:
+
+```bash
 uvicorn app.main:app --port 8000 --reload
 ```
-MongoDB **6.0 or newer** is required (the grader uses 7.0). MongoDB Atlas free tier (M0) works.
 
-## Submit
-A public Git repository with `app/main.py`, `requirements.txt`, `REVIEW.md`, `DECISIONS.md` and a short `README.md`.
-No `.env`, no secrets, no Dockerfile.
+Interactive API documentation (Swagger UI) is accessible at:
+- **Swagger UI**: `http://localhost:8000/docs`
+- **Readiness probe**: `http://localhost:8000/health`
+
+---
+
+## 4. Running Automated Tests
+
+All tests run against an isolated, disposable test database (`attendance_test_<uuid>`) and will automatically clean up after execution:
+
+```bash
+# Run complete test suite with verbose output
+python -m pytest tests/test_sprint1.py -v
+
+# Byte-compile check
+python -m compileall -q app tests
+```
+
+---
+
+## 5. Scope & Current Status
+
+- **Sprint 1 (Complete)**:
+  - Base configuration, connection resilience, and automated index creation on startup.
+  - Health check endpoint (`GET /health`) with live MongoDB ping.
+  - Employee endpoints (`POST /employees`, `GET /employees`) with strict Pydantic validation, deterministic sorting, and 1-based pagination.
+  - Attendance punch-in (`POST /attendance/punch-in`) with business rules R1 (overnight shifts, IST timezone, truncation), R2 (10-minute grace period boundary), and race-condition prevention via compound unique index.
+  - Attendance listing (`GET /attendance`) with database-level pagination, sorting, and strict calendar-date validation.
+  - Comprehensive defect analysis recorded in `REVIEW.md`.
+- **Sprint 2 & Later (Planned)**:
+  - `POST /attendance/punch-out`
+  - `PATCH /attendance/{emp_code}/{date}` (regularization with audit history)
+  - Analytics aggregation pipelines (`/analytics/*`)
+  - Admin query explain endpoint (`/admin/explain/*`)

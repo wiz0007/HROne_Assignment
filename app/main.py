@@ -28,16 +28,32 @@ db = client[MONGO_DB]
 IST = timezone(timedelta(hours=5, minutes=30))
 
 
+def set_database(target_db):
+    """Sets the active database instance (used for testing and isolation)."""
+    global db
+    db = target_db
+
+
+def create_required_indexes(target_db=None):
+    """
+    Creates required unique and query indexes.
+    Raises an exception if index creation fails; must not be swallowed.
+    """
+    database = target_db if target_db is not None else db
+    database.employees.create_index("emp_code", unique=True)
+    database.employees.create_index("department")
+    database.attendance_logs.create_index([("emp_code", 1), ("date", 1)], unique=True)
+    database.attendance_logs.create_index([("date", -1), ("emp_code", 1)])
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Ensure indexes on startup idempotently
+    # Ensure required indexes on startup before accepting requests.
+    # Fail fast if critical uniqueness indexes cannot be established.
     try:
-        db.employees.create_index("emp_code", unique=True)
-        db.employees.create_index("department")
-        db.attendance_logs.create_index([("emp_code", 1), ("date", 1)], unique=True)
-        db.attendance_logs.create_index([("date", -1), ("emp_code", 1)])
+        create_required_indexes(db)
     except Exception as e:
-        print(f"Error creating indexes on startup: {e}")
+        raise RuntimeError(f"Critical error initializing MongoDB indexes on startup: {e}") from e
     yield
 
 
@@ -51,6 +67,19 @@ app = FastAPI(
 # --------------------------------------------------------------------------- #
 # Helpers & Business Rules (R1 - R5)
 # --------------------------------------------------------------------------- #
+def validate_calendar_date(value: Optional[str], field_name: str) -> Optional[str]:
+    """Validates strict YYYY-MM-DD format and real calendar dates."""
+    if value is None:
+        return None
+    if len(value) != 10 or value[4] != "-" or value[7] != "-":
+        raise HTTPException(422, f"Invalid date format for {field_name}: '{value}'")
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        raise HTTPException(422, f"Impossible calendar date for {field_name}: '{value}'")
+    return value
+
+
 def to_utc_datetime(ms: int) -> datetime:
     """Converts epoch milliseconds (truncated to whole seconds) to UTC-aware datetime."""
     truncated_ms = (ms // 1000) * 1000
@@ -172,7 +201,7 @@ class EmployeeCreate(BaseModel):
         try:
             date.fromisoformat(self.joined_on)
         except ValueError:
-            raise ValueError("joined_on must be a valid date in YYYY-MM-DD format")
+            raise ValueError("joined_on must be a valid calendar date in YYYY-MM-DD format")
         return self
 
 
@@ -233,13 +262,19 @@ def serialize_attendance(doc: dict) -> dict:
 # --------------------------------------------------------------------------- #
 # Endpoints
 # --------------------------------------------------------------------------- #
+def ping_database():
+    """Pings MongoDB admin command; raises an exception if unreachable."""
+    client.admin.command("ping")
+
+
 @app.get("/health")
 def health():
     try:
-        client.admin.command("ping")
+        ping_database()
         return {"status": "ok"}
     except Exception:
         raise HTTPException(503, "Database unavailable")
+
 
 
 @app.post("/employees", status_code=201)
@@ -308,12 +343,17 @@ def punch_in(body: PunchInRequest):
 @app.get("/attendance")
 def list_attendance(
     emp_code: Optional[str] = Query(None),
-    date_from: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
-    date_to: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
     status: Optional[StatusEnum] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ):
+    if date_from is not None:
+        validate_calendar_date(date_from, "date_from")
+    if date_to is not None:
+        validate_calendar_date(date_to, "date_to")
+
     if date_from and date_to and date_from > date_to:
         raise HTTPException(422, "date_from must not be greater than date_to")
 
