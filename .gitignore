@@ -1,0 +1,22 @@
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# Environment variables
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pytest_cache/
+
+# Testing
+.coverage
+htmlcov/
+tests/__pycache__/
+
+# IDE
+.vscode/
+.idea/
