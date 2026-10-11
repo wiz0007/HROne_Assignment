@@ -235,7 +235,6 @@ class RegularizeRequest(BaseModel):
     regularized_by: str = Field(..., min_length=1, max_length=50)
 
 
-
 # --------------------------------------------------------------------------- #
 # Serializers
 # --------------------------------------------------------------------------- #
@@ -355,6 +354,7 @@ def punch_in(body: PunchInRequest):
         "overtime_minutes": 0,
         "half_day": False,
         "history": [],
+        "revision": 0,
     }
 
     try:
@@ -420,29 +420,14 @@ def punch_out(body: PunchOutRequest):
         out_dt = datetime.now(timezone.utc).replace(microsecond=0)
 
     # Step 4.2: Candidate record selection
+    # Closes the employee's most recent record whose punch_in is at or before punched_at
     candidate = db.attendance_logs.find_one(
-        {"emp_code": body.emp_code, "punch_in": {"$lte": out_dt}},
+        {"emp_code": body.emp_code, "punch_in": {"$ne": None, "$lte": out_dt}},
         sort=[("punch_in", -1)],
     )
 
     if not candidate:
-        # Check if employee has any record with punch_in at all
-        any_punch = db.attendance_logs.find_one(
-            {"emp_code": body.emp_code, "punch_in": {"$ne": None}},
-            sort=[("punch_in", -1)],
-        )
-        if any_punch:
-            # Employee has a punch-in, but out_dt is before/equal to it -> 422
-            raise HTTPException(422, "punched_at must be strictly later than punch_in")
-        raise HTTPException(404, "No eligible punch-in record found")
-
-    # Check if a later punch_in exists for this employee (avoid wrong-record masking)
-    latest_overall = db.attendance_logs.find_one(
-        {"emp_code": body.emp_code, "punch_in": {"$ne": None}},
-        sort=[("punch_in", -1)],
-    )
-    if latest_overall and latest_overall["_id"] != candidate["_id"]:
-        raise HTTPException(422, "punched_at must be strictly later than punch_in")
+        raise HTTPException(404, "No punch-in found")
 
     # If candidate is already closed -> 409
     if candidate.get("punch_out") is not None:
@@ -450,11 +435,11 @@ def punch_out(body: PunchOutRequest):
 
     cand_punch_in = ensure_utc(candidate.get("punch_in"))
     if cand_punch_in is None:
-        raise HTTPException(422, "Candidate record has no punch_in")
+        raise HTTPException(404, "No punch-in found")
 
     # Step 4.3: Temporal bounds
     if out_dt <= cand_punch_in:
-        raise HTTPException(422, "punch_out must be strictly later than punch_in")
+        raise HTTPException(422, "punched_at must be strictly later than punch_in")
 
     elapsed_seconds = (out_dt - cand_punch_in).total_seconds()
     if elapsed_seconds > 86400:
@@ -467,16 +452,29 @@ def punch_out(body: PunchOutRequest):
     )
     half_day = compute_half_day(work_hours)
 
-    # Step 4.4: Atomic close and race protection
+    # Step 4.4: Atomic close and race protection using shared revision CAS
+    exp_rev = candidate.get("revision")
+    and_conditions = [
+        {"_id": candidate["_id"]},
+        {"punch_out": None},
+    ]
+    if exp_rev is None:
+        and_conditions.append({"$or": [{"revision": 0}, {"revision": {"$exists": False}}]})
+    else:
+        and_conditions.append({"revision": exp_rev})
+
     res = db.attendance_logs.find_one_and_update(
-        {"_id": candidate["_id"], "punch_out": None},
+        {"$and": and_conditions},
         {
             "$set": {
                 "punch_out": out_dt,
                 "work_hours": work_hours,
                 "overtime_minutes": overtime_min,
                 "half_day": half_day,
-            }
+            },
+            "$inc": {
+                "revision": 1,
+            },
         },
         return_document=ReturnDocument.AFTER,
     )
@@ -486,7 +484,7 @@ def punch_out(body: PunchOutRequest):
         recheck = db.attendance_logs.find_one({"_id": candidate["_id"]})
         if recheck and recheck.get("punch_out") is not None:
             raise HTTPException(409, "that record is already punched out")
-        raise HTTPException(409, "Concurrent modification conflict")
+        raise HTTPException(409, "Concurrent modification conflict on attendance record")
 
     return serialize_attendance(res)
 
@@ -618,13 +616,24 @@ def regularize_attendance(
         "changes": changes_db,
     }
 
-    # Step 5.5: Prevent lost updates using optimistic concurrency
-    current_history_len = len(record.get("history", []))
+    # Step 5.5: Prevent lost updates using optimistic concurrency (shared revision + history length)
+    exp_rev = record.get("revision")
+    curr_hist = record.get("history")
+    curr_hist_len = len(curr_hist) if curr_hist is not None else 0
+
+    and_conditions = [{"_id": record["_id"]}]
+    if exp_rev is None:
+        and_conditions.append({"$or": [{"revision": 0}, {"revision": {"$exists": False}}]})
+    else:
+        and_conditions.append({"revision": exp_rev})
+
+    if curr_hist_len == 0:
+        and_conditions.append({"$or": [{"history": {"$size": 0}}, {"history": {"$exists": False}}]})
+    else:
+        and_conditions.append({"history": {"$size": curr_hist_len}})
+
     res = db.attendance_logs.find_one_and_update(
-        {
-            "_id": record["_id"],
-            "history": {"$size": current_history_len},
-        },
+        {"$and": and_conditions},
         {
             "$set": {
                 "status": target_status,
@@ -637,6 +646,9 @@ def regularize_attendance(
             },
             "$push": {
                 "history": history_entry,
+            },
+            "$inc": {
+                "revision": 1,
             },
         },
         return_document=ReturnDocument.AFTER,
