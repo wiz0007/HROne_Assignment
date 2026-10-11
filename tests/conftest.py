@@ -1,7 +1,6 @@
 import os
 import uuid
 import pytest
-from pymongo import MongoClient
 
 # Configure test environment variable BEFORE importing app.main
 TEST_DB_NAME = f"attendance_test_{uuid.uuid4().hex[:8]}"
