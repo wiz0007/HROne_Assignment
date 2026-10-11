@@ -300,7 +300,6 @@ def health():
         raise HTTPException(503, "Database unavailable")
 
 
-
 @app.post("/employees", status_code=201)
 def create_employee(body: EmployeeCreate):
     created_at_dt = datetime.now(timezone.utc).replace(microsecond=0)
@@ -668,4 +667,3 @@ def regularize_attendance(
 #   GET   /analytics/departments/{department}/trend
 #   GET   /admin/explain/{endpoint}
 # --------------------------------------------------------------------------- #
-
