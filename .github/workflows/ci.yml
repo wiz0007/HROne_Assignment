@@ -31,6 +31,7 @@ jobs:
     env:
       MONGO_URI: mongodb://localhost:27017
       MONGO_DB: ci_test_db
+      PYTHONPATH: .
 
     steps:
       - name: Checkout Repository
@@ -72,7 +73,7 @@ jobs:
 
       - name: Run Automated Test Suite (All Sprints)
         run: |
-          pytest -v
+          python -m pytest -v
 
       - name: API Startup & Health Endpoint Smoke Test
         run: |
