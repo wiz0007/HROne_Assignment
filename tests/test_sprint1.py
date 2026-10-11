@@ -1,4 +1,3 @@
-import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, time, timedelta, timezone
 from unittest.mock import patch
@@ -14,10 +13,7 @@ from app.main import (
     compute_late_minutes,
     compute_overtime,
     compute_work_hours,
-    create_required_indexes,
     get_attendance_date,
-    lifespan,
-    validate_calendar_date,
 )
 
 

@@ -14,7 +14,7 @@ from typing import Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
-from pymongo import MongoClient
+from pymongo import MongoClient, ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 load_dotenv()
@@ -84,6 +84,17 @@ def to_utc_datetime(ms: int) -> datetime:
     """Converts epoch milliseconds (truncated to whole seconds) to UTC-aware datetime."""
     truncated_ms = (ms // 1000) * 1000
     return datetime.fromtimestamp(truncated_ms / 1000, tz=timezone.utc)
+
+
+def ensure_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """Ensures a datetime is timezone-aware in UTC. If naive, assumes UTC."""
+    if dt is None:
+        return None
+    if isinstance(dt, datetime):
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    return dt
 
 
 def to_epoch_ms(dt: Optional[datetime]) -> Optional[int]:
@@ -211,6 +222,19 @@ class PunchInRequest(BaseModel):
     status: PresenceStatus = PresenceStatus.PRESENT
 
 
+class PunchOutRequest(BaseModel):
+    emp_code: str
+    punched_at: Optional[int] = Field(None, strict=True, ge=100000000000, le=4102444800000)
+
+
+class RegularizeRequest(BaseModel):
+    status: Optional[StatusEnum] = None
+    punch_in: Optional[int] = Field(None, strict=True, ge=100000000000, le=4102444800000)
+    punch_out: Optional[int] = Field(None, strict=True, ge=100000000000, le=4102444800000)
+    reason: str = Field(..., min_length=5, max_length=200)
+    regularized_by: str = Field(..., min_length=1, max_length=50)
+
+
 # --------------------------------------------------------------------------- #
 # Serializers
 # --------------------------------------------------------------------------- #
@@ -276,7 +300,6 @@ def health():
         raise HTTPException(503, "Database unavailable")
 
 
-
 @app.post("/employees", status_code=201)
 def create_employee(body: EmployeeCreate):
     created_at_dt = datetime.now(timezone.utc).replace(microsecond=0)
@@ -330,6 +353,7 @@ def punch_in(body: PunchInRequest):
         "overtime_minutes": 0,
         "half_day": False,
         "history": [],
+        "revision": 0,
     }
 
     try:
@@ -381,10 +405,262 @@ def list_attendance(
     return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
+@app.post("/attendance/punch-out", status_code=200)
+def punch_out(body: PunchOutRequest):
+    # Step 4.1: Lookup employee
+    emp = db.employees.find_one({"emp_code": body.emp_code})
+    if not emp:
+        raise HTTPException(404, "Employee not found")
+
+    # Timestamp handling: defaults to server now; truncated to whole seconds
+    if body.punched_at is not None:
+        out_dt = to_utc_datetime(body.punched_at)
+    else:
+        out_dt = datetime.now(timezone.utc).replace(microsecond=0)
+
+    # Step 4.2: Candidate record selection
+    # Closes the employee's most recent record whose punch_in is at or before punched_at
+    candidate = db.attendance_logs.find_one(
+        {"emp_code": body.emp_code, "punch_in": {"$ne": None, "$lte": out_dt}},
+        sort=[("punch_in", -1)],
+    )
+
+    if not candidate:
+        raise HTTPException(404, "No punch-in found")
+
+    # If candidate is already closed -> 409
+    if candidate.get("punch_out") is not None:
+        raise HTTPException(409, "that record is already punched out")
+
+    cand_punch_in = ensure_utc(candidate.get("punch_in"))
+    if cand_punch_in is None:
+        raise HTTPException(404, "No punch-in found")
+
+    # Step 4.3: Temporal bounds
+    if out_dt <= cand_punch_in:
+        raise HTTPException(422, "punched_at must be strictly later than punch_in")
+
+    elapsed_seconds = (out_dt - cand_punch_in).total_seconds()
+    if elapsed_seconds > 86400:
+        raise HTTPException(422, "punch_out cannot be more than 24 hours after punch_in")
+
+    # Derived calculations
+    work_hours = compute_work_hours(cand_punch_in, out_dt)
+    overtime_min = compute_overtime(
+        out_dt, emp["shift_end"], emp["shift_start"], candidate["date"]
+    )
+    half_day = compute_half_day(work_hours)
+
+    # Step 4.4: Atomic close and race protection using shared revision CAS
+    exp_rev = candidate.get("revision")
+    and_conditions = [
+        {"_id": candidate["_id"]},
+        {"punch_out": None},
+    ]
+    if exp_rev is None:
+        and_conditions.append({"$or": [{"revision": 0}, {"revision": {"$exists": False}}]})
+    else:
+        and_conditions.append({"revision": exp_rev})
+
+    res = db.attendance_logs.find_one_and_update(
+        {"$and": and_conditions},
+        {
+            "$set": {
+                "punch_out": out_dt,
+                "work_hours": work_hours,
+                "overtime_minutes": overtime_min,
+                "half_day": half_day,
+            },
+            "$inc": {
+                "revision": 1,
+            },
+        },
+        return_document=ReturnDocument.AFTER,
+    )
+
+    if not res:
+        # Recheck to distinguish already closed from other conflict
+        recheck = db.attendance_logs.find_one({"_id": candidate["_id"]})
+        if recheck and recheck.get("punch_out") is not None:
+            raise HTTPException(409, "that record is already punched out")
+        raise HTTPException(409, "Concurrent modification conflict on attendance record")
+
+    return serialize_attendance(res)
+
+
+@app.patch("/attendance/{emp_code}/{date}", status_code=200)
+def regularize_attendance(
+    emp_code: str,
+    date: str,
+    body: RegularizeRequest,
+):
+    # Step 5.1: Path parameter calendar date validation
+    validate_calendar_date(date, "date")
+
+    # Lookup employee
+    emp = db.employees.find_one({"emp_code": emp_code})
+    if not emp:
+        raise HTTPException(404, "Employee not found")
+
+    # Lookup attendance record
+    record = db.attendance_logs.find_one({"emp_code": emp_code, "date": date})
+    if not record:
+        raise HTTPException(404, "Attendance record not found")
+
+    supplied = body.model_fields_set
+
+    # Step 5.2 & 5.3: Determine target state
+    target_status = (
+        body.status.value
+        if ("status" in supplied and body.status is not None)
+        else record["status"]
+    )
+
+    if target_status in ("ABSENT", "LEAVE"):
+        if "punch_in" in supplied or "punch_out" in supplied:
+            raise HTTPException(
+                422,
+                "Supplying punch_in or punch_out when setting ABSENT or LEAVE is not allowed",
+            )
+        final_punch_in = None
+        final_punch_out = None
+        final_late_minutes = 0
+        final_work_hours = None
+        final_overtime_minutes = 0
+        final_half_day = False
+    else:
+        # Target status is a presence status: PRESENT, WFH, ON_DUTY
+        if "punch_in" in supplied:
+            if body.punch_in is None:
+                raise HTTPException(422, "Presence status requires a punch_in")
+            final_punch_in = to_utc_datetime(body.punch_in)
+        else:
+            final_punch_in = ensure_utc(record.get("punch_in"))
+
+        if final_punch_in is None:
+            raise HTTPException(422, "Presence status requires a punch_in")
+
+        # R1 attendance date invariant: punch_in must stay on the record's attendance date
+        punch_in_date = get_attendance_date(
+            final_punch_in, emp["shift_start"], emp["shift_end"]
+        )
+        if punch_in_date != date:
+            raise HTTPException(
+                422,
+                f"punch_in belongs to attendance date {punch_in_date}, which does not match record date {date}",
+            )
+
+        # Target punch_out
+        if "punch_out" in supplied:
+            if body.punch_out is not None:
+                final_punch_out = to_utc_datetime(body.punch_out)
+            else:
+                final_punch_out = None  # explicit null clears punch_out
+        else:
+            final_punch_out = ensure_utc(record.get("punch_out"))
+
+        if final_punch_out is not None:
+            if final_punch_out <= final_punch_in:
+                raise HTTPException(422, "punch_out must be strictly later than punch_in")
+            if (final_punch_out - final_punch_in).total_seconds() > 86400:
+                raise HTTPException(
+                    422, "punch_out cannot be more than 24 hours after punch_in"
+                )
+
+            final_work_hours = compute_work_hours(final_punch_in, final_punch_out)
+            final_overtime_minutes = compute_overtime(
+                final_punch_out, emp["shift_end"], emp["shift_start"], date
+            )
+            final_half_day = compute_half_day(final_work_hours)
+        else:
+            final_work_hours = None
+            final_overtime_minutes = 0
+            final_half_day = False
+
+        final_late_minutes = compute_late_minutes(final_punch_in, emp["shift_start"], date)
+
+    # Step 5.4: Build exact audit diff
+    orig_status = record.get("status")
+    orig_punch_in_dt = ensure_utc(record.get("punch_in"))
+    orig_punch_out_dt = ensure_utc(record.get("punch_out"))
+    orig_late = record.get("late_minutes", 0)
+    orig_work_hours = record.get("work_hours")
+    orig_ot = record.get("overtime_minutes", 0)
+    orig_half_day = record.get("half_day", False)
+
+    changes_db = {}
+    if orig_status != target_status:
+        changes_db["status"] = {"from": orig_status, "to": target_status}
+    if orig_punch_in_dt != final_punch_in:
+        changes_db["punch_in"] = {"from": orig_punch_in_dt, "to": final_punch_in}
+    if orig_punch_out_dt != final_punch_out:
+        changes_db["punch_out"] = {"from": orig_punch_out_dt, "to": final_punch_out}
+    if orig_late != final_late_minutes:
+        changes_db["late_minutes"] = {"from": orig_late, "to": final_late_minutes}
+    if orig_work_hours != final_work_hours:
+        changes_db["work_hours"] = {"from": orig_work_hours, "to": final_work_hours}
+    if orig_ot != final_overtime_minutes:
+        changes_db["overtime_minutes"] = {"from": orig_ot, "to": final_overtime_minutes}
+    if orig_half_day != final_half_day:
+        changes_db["half_day"] = {"from": orig_half_day, "to": final_half_day}
+
+    # No-op check: if no business or derived field actually changed, reject with 422
+    if not changes_db:
+        raise HTTPException(422, "Correction must change at least one field (no-op request)")
+
+    history_entry = {
+        "at": datetime.now(timezone.utc).replace(microsecond=0),
+        "by": body.regularized_by,
+        "reason": body.reason,
+        "changes": changes_db,
+    }
+
+    # Step 5.5: Prevent lost updates using optimistic concurrency (shared revision + history length)
+    exp_rev = record.get("revision")
+    curr_hist = record.get("history")
+    curr_hist_len = len(curr_hist) if curr_hist is not None else 0
+
+    and_conditions = [{"_id": record["_id"]}]
+    if exp_rev is None:
+        and_conditions.append({"$or": [{"revision": 0}, {"revision": {"$exists": False}}]})
+    else:
+        and_conditions.append({"revision": exp_rev})
+
+    if curr_hist_len == 0:
+        and_conditions.append({"$or": [{"history": {"$size": 0}}, {"history": {"$exists": False}}]})
+    else:
+        and_conditions.append({"history": {"$size": curr_hist_len}})
+
+    res = db.attendance_logs.find_one_and_update(
+        {"$and": and_conditions},
+        {
+            "$set": {
+                "status": target_status,
+                "punch_in": final_punch_in,
+                "punch_out": final_punch_out,
+                "late_minutes": final_late_minutes,
+                "work_hours": final_work_hours,
+                "overtime_minutes": final_overtime_minutes,
+                "half_day": final_half_day,
+            },
+            "$push": {
+                "history": history_entry,
+            },
+            "$inc": {
+                "revision": 1,
+            },
+        },
+        return_document=ReturnDocument.AFTER,
+    )
+
+    if not res:
+        raise HTTPException(409, "Concurrent modification conflict on attendance record")
+
+    return serialize_attendance(res)
+
+
 # --------------------------------------------------------------------------- #
-# TODO - the rest of the contract (Sprint 2 & later):
-#   POST  /attendance/punch-out
-#   PATCH /attendance/{emp_code}/{date}
+# TODO - the rest of the contract (Sprint 3 & later):
 #   GET   /analytics/employees/{emp_code}/monthly
 #   GET   /analytics/departments/summary
 #   GET   /analytics/leaderboard/late
