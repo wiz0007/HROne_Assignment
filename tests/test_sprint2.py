@@ -1,20 +1,10 @@
-import os
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import (
-    IST,
-    app,
-    compute_half_day,
-    compute_late_minutes,
-    compute_overtime,
-    compute_work_hours,
-    get_attendance_date,
-    to_utc_datetime,
-)
+from app.main import app
 
 
 # =========================================================================== #
@@ -298,7 +288,7 @@ def test_punch_out_repeat_already_closed_returns_409(client_app):
 
 
 def test_punch_out_before_or_equal_to_punch_in(client_app):
-    """Punched_at <= punch_in must return 422 without masking."""
+    """Punched_at <= punch_in: before all punch-ins returns 404, equal to punch-in returns 422."""
     client_app.post("/employees", json={
         "emp_code": "EMP0110",
         "name": "Order User",
@@ -316,15 +306,15 @@ def test_punch_out_before_or_equal_to_punch_in(client_app):
         "punched_at": int(t_in.timestamp() * 1000),
     })
 
-    # Punch out earlier at 09:30:00 UTC -> 422
+    # Punch out earlier at 09:30:00 UTC (before all punch-ins of this employee) -> 404
     t_early = datetime(2026, 7, 6, 9, 30, 0, tzinfo=timezone.utc)
     res_early = client_app.post("/attendance/punch-out", json={
         "emp_code": "EMP0110",
         "punched_at": int(t_early.timestamp() * 1000),
     })
-    assert res_early.status_code == 422
+    assert res_early.status_code == 404
 
-    # Punch out at exact same instant 10:00:00 UTC -> 422
+    # Punch out at exact same instant 10:00:00 UTC (punched_at <= punch_in) -> 422
     res_equal = client_app.post("/attendance/punch-out", json={
         "emp_code": "EMP0110",
         "punched_at": int(t_in.timestamp() * 1000),
@@ -738,3 +728,509 @@ def test_regularize_concurrency_race(client_app):
     assert 200 in codes
     if codes != [200, 200]:
         assert codes == [200, 409]
+
+
+# =========================================================================== #
+# Phase 1: Legacy Documents (Issue 1) Tests
+# =========================================================================== #
+
+def test_regularize_legacy_empty_history_array(client_app, test_db):
+    """Legacy document with explicit history: [] and no revision succeeds."""
+    client_app.post("/employees", json={
+        "emp_code": "EMP0150",
+        "name": "Legacy Hist User",
+        "email": "leg1@example.com",
+        "department": "Support",
+        "shift_start": "09:30",
+        "shift_end": "18:30",
+        "joined_on": "2026-01-05",
+    })
+    t_in = datetime(2026, 7, 6, 4, 0, 0, tzinfo=timezone.utc)
+    # Directly seed a document without revision, with history: []
+    test_db.attendance_logs.insert_one({
+        "emp_code": "EMP0150",
+        "date": "2026-07-06",
+        "status": "PRESENT",
+        "punch_in": t_in,
+        "punch_out": None,
+        "work_hours": None,
+        "late_minutes": 0,
+        "overtime_minutes": 0,
+        "half_day": False,
+        "history": [],
+    })
+
+    t_out = datetime(2026, 7, 6, 13, 0, 0, tzinfo=timezone.utc)
+    res = client_app.patch("/attendance/EMP0150/2026-07-06", json={
+        "punch_out": int(t_out.timestamp() * 1000),
+        "reason": "Regularizing legacy record with empty history",
+        "regularized_by": "Auditor",
+    })
+    assert res.status_code == 200
+    doc = test_db.attendance_logs.find_one({"emp_code": "EMP0150", "date": "2026-07-06"})
+    assert len(doc["history"]) == 1
+    assert doc.get("revision") == 1
+    assert doc["work_hours"] == 9.0
+
+
+def test_regularize_legacy_missing_history_field(client_app, test_db):
+    """Legacy document completely lacking 'history' and derived fields succeeds and initialises them."""
+    client_app.post("/employees", json={
+        "emp_code": "EMP0151",
+        "name": "Missing Hist User",
+        "email": "leg2@example.com",
+        "department": "Support",
+        "shift_start": "09:30",
+        "shift_end": "18:30",
+        "joined_on": "2026-01-05",
+    })
+    t_in = datetime(2026, 7, 6, 4, 0, 0, tzinfo=timezone.utc)
+    # Seed legacy document without history, half_day, overtime_minutes, late_minutes, work_hours, revision
+    test_db.attendance_logs.insert_one({
+        "emp_code": "EMP0151",
+        "date": "2026-07-06",
+        "status": "PRESENT",
+        "punch_in": t_in,
+        "punch_out": None,
+    })
+
+    t_out = datetime(2026, 7, 6, 8, 0, 0, tzinfo=timezone.utc)  # 4 hours worked -> half_day = True
+    res = client_app.patch("/attendance/EMP0151/2026-07-06", json={
+        "punch_out": int(t_out.timestamp() * 1000),
+        "reason": "Regularizing record without history field",
+        "regularized_by": "Auditor",
+    })
+    assert res.status_code == 200
+    doc = test_db.attendance_logs.find_one({"emp_code": "EMP0151", "date": "2026-07-06"})
+    assert "history" in doc
+    assert len(doc["history"]) == 1
+    assert doc.get("revision") == 1
+    assert doc["work_hours"] == 4.0
+    assert doc["half_day"] is True
+    assert doc["overtime_minutes"] == 0
+    assert doc["late_minutes"] == 0
+
+
+def test_regularize_legacy_nonempty_history_appends(client_app, test_db):
+    """Legacy document with existing history entry appends a second entry without data loss."""
+    client_app.post("/employees", json={
+        "emp_code": "EMP0152",
+        "name": "Append Hist User",
+        "email": "leg3@example.com",
+        "department": "Support",
+        "shift_start": "09:30",
+        "shift_end": "18:30",
+        "joined_on": "2026-01-05",
+    })
+    t_in = datetime(2026, 7, 6, 4, 0, 0, tzinfo=timezone.utc)
+    initial_entry = {
+        "at": datetime(2026, 7, 6, 5, 0, 0, tzinfo=timezone.utc),
+        "by": "First Admin",
+        "reason": "Initial manual fix",
+        "changes": {"status": {"from": "PRESENT", "to": "WFH"}},
+    }
+    test_db.attendance_logs.insert_one({
+        "emp_code": "EMP0152",
+        "date": "2026-07-06",
+        "status": "WFH",
+        "punch_in": t_in,
+        "punch_out": None,
+        "work_hours": None,
+        "late_minutes": 0,
+        "overtime_minutes": 0,
+        "half_day": False,
+        "history": [initial_entry],
+    })
+
+    res = client_app.patch("/attendance/EMP0152/2026-07-06", json={
+        "status": "ON_DUTY",
+        "reason": "Second manual fix",
+        "regularized_by": "Second Admin",
+    })
+    assert res.status_code == 200
+    doc = test_db.attendance_logs.find_one({"emp_code": "EMP0152", "date": "2026-07-06"})
+    assert len(doc["history"]) == 2
+    assert doc["history"][0]["by"] == "First Admin"
+    assert doc["history"][1]["by"] == "Second Admin"
+    assert doc["status"] == "ON_DUTY"
+    assert doc.get("revision") == 1
+
+
+def test_regularize_invalid_update_creates_no_history(client_app, test_db):
+    """An invalid regularization request leaves database document and history untouched."""
+    client_app.post("/employees", json={
+        "emp_code": "EMP0153",
+        "name": "Invalid Reg User",
+        "email": "leg4@example.com",
+        "department": "Support",
+        "shift_start": "09:30",
+        "shift_end": "18:30",
+        "joined_on": "2026-01-05",
+    })
+    t_in = datetime(2026, 7, 6, 4, 0, 0, tzinfo=timezone.utc)
+    test_db.attendance_logs.insert_one({
+        "emp_code": "EMP0153",
+        "date": "2026-07-06",
+        "status": "PRESENT",
+        "punch_in": t_in,
+        "punch_out": None,
+        "work_hours": None,
+        "late_minutes": 0,
+        "overtime_minutes": 0,
+        "half_day": False,
+        "history": [],
+    })
+
+    # Supply invalid punch_out (punch_out earlier than punch_in -> 422)
+    t_bad_out = datetime(2026, 7, 6, 3, 0, 0, tzinfo=timezone.utc)
+    res = client_app.patch("/attendance/EMP0153/2026-07-06", json={
+        "punch_out": int(t_bad_out.timestamp() * 1000),
+        "reason": "Attempting invalid punch-out",
+        "regularized_by": "Admin",
+    })
+    assert res.status_code == 422
+    doc = test_db.attendance_logs.find_one({"emp_code": "EMP0153", "date": "2026-07-06"})
+    assert doc["history"] == []
+    assert doc.get("revision") is None or doc.get("revision") == 0
+
+
+# =========================================================================== #
+# Phase 2: Historical Record Selection (Issue 2) Tests
+# =========================================================================== #
+
+def test_punch_out_historical_selection_with_newer_open_record(client_app, test_db):
+    """Punch-out selects the correct historical open record without being blocked by a newer open record."""
+    client_app.post("/employees", json={
+        "emp_code": "EMP0201",
+        "name": "Historical User",
+        "email": "hist1@example.com",
+        "department": "Engineering",
+        "shift_start": "09:30",
+        "shift_end": "18:30",
+        "joined_on": "2026-01-05",
+    })
+    # Record A: Day 1 (Oct 10, 09:00 UTC) -> open
+    t_in_a = datetime(2026, 10, 10, 9, 0, 0, tzinfo=timezone.utc)
+    test_db.attendance_logs.insert_one({
+        "emp_code": "EMP0201",
+        "date": "2026-10-10",
+        "status": "PRESENT",
+        "punch_in": t_in_a,
+        "punch_out": None,
+        "work_hours": None,
+        "late_minutes": 0,
+        "overtime_minutes": 0,
+        "half_day": False,
+        "history": [],
+        "revision": 0,
+    })
+
+    # Record B: Day 2 (Oct 11, 09:00 UTC) -> open
+    t_in_b = datetime(2026, 10, 11, 9, 0, 0, tzinfo=timezone.utc)
+    test_db.attendance_logs.insert_one({
+        "emp_code": "EMP0201",
+        "date": "2026-10-11",
+        "status": "PRESENT",
+        "punch_in": t_in_b,
+        "punch_out": None,
+        "work_hours": None,
+        "late_minutes": 0,
+        "overtime_minutes": 0,
+        "half_day": False,
+        "history": [],
+        "revision": 0,
+    })
+
+    # Punch-out for Day 1: Oct 10 18:00 UTC
+    t_out_a = datetime(2026, 10, 10, 18, 0, 0, tzinfo=timezone.utc)
+    res_a = client_app.post("/attendance/punch-out", json={
+        "emp_code": "EMP0201",
+        "punched_at": int(t_out_a.timestamp() * 1000),
+    })
+    assert res_a.status_code == 200
+    assert res_a.json()["date"] == "2026-10-10"
+    assert res_a.json()["work_hours"] == 9.0
+
+    # Verify Day 1 is closed and Day 2 remains open in DB
+    doc_a = test_db.attendance_logs.find_one({"emp_code": "EMP0201", "date": "2026-10-10"})
+    doc_b = test_db.attendance_logs.find_one({"emp_code": "EMP0201", "date": "2026-10-11"})
+    assert doc_a["punch_out"] is not None
+    assert doc_b["punch_out"] is None
+
+    # Now punch-out for Day 2: Oct 11 18:00 UTC
+    t_out_b = datetime(2026, 10, 11, 18, 0, 0, tzinfo=timezone.utc)
+    res_b = client_app.post("/attendance/punch-out", json={
+        "emp_code": "EMP0201",
+        "punched_at": int(t_out_b.timestamp() * 1000),
+    })
+    assert res_b.status_code == 200
+    assert res_b.json()["date"] == "2026-10-11"
+    doc_b_after = test_db.attendance_logs.find_one({"emp_code": "EMP0201", "date": "2026-10-11"})
+    assert doc_b_after["punch_out"] is not None
+
+
+def test_punch_out_does_not_select_older_open_if_newer_closed(client_app, test_db):
+    """If the most recent eligible record is already closed, returns 409 and does not close an older forgotten open record."""
+    client_app.post("/employees", json={
+        "emp_code": "EMP0202",
+        "name": "Older Open User",
+        "email": "hist2@example.com",
+        "department": "Engineering",
+        "shift_start": "09:30",
+        "shift_end": "18:30",
+        "joined_on": "2026-01-05",
+    })
+    # Day 1: forgot to punch out (open)
+    t_in_d1 = datetime(2026, 10, 8, 9, 0, 0, tzinfo=timezone.utc)
+    test_db.attendance_logs.insert_one({
+        "emp_code": "EMP0202",
+        "date": "2026-10-08",
+        "status": "PRESENT",
+        "punch_in": t_in_d1,
+        "punch_out": None,
+        "work_hours": None,
+        "late_minutes": 0,
+        "overtime_minutes": 0,
+        "half_day": False,
+        "history": [],
+    })
+
+    # Day 2: punched in and closed
+    t_in_d2 = datetime(2026, 10, 9, 9, 0, 0, tzinfo=timezone.utc)
+    t_out_d2 = datetime(2026, 10, 9, 18, 0, 0, tzinfo=timezone.utc)
+    test_db.attendance_logs.insert_one({
+        "emp_code": "EMP0202",
+        "date": "2026-10-09",
+        "status": "PRESENT",
+        "punch_in": t_in_d2,
+        "punch_out": t_out_d2,
+        "work_hours": 9.0,
+        "late_minutes": 0,
+        "overtime_minutes": 0,
+        "half_day": False,
+        "history": [],
+    })
+
+    # Punch-out timestamp at Oct 9 19:00 UTC (after Day 2 closed record)
+    res = client_app.post("/attendance/punch-out", json={
+        "emp_code": "EMP0202",
+        "punched_at": int(datetime(2026, 10, 9, 19, 0, 0, tzinfo=timezone.utc).timestamp() * 1000),
+    })
+    # Most recent record with punch_in <= Oct 9 19:00 is Day 2, which is already closed -> 409
+    assert res.status_code == 409
+
+    # Verify Day 1 was NOT modified
+    d1 = test_db.attendance_logs.find_one({"emp_code": "EMP0202", "date": "2026-10-08"})
+    assert d1["punch_out"] is None
+
+
+def test_punch_out_before_all_punch_ins_returns_404(client_app):
+    """Punched_at strictly earlier than all punch-in records returns 404."""
+    client_app.post("/employees", json={
+        "emp_code": "EMP0203",
+        "name": "Early User",
+        "email": "hist3@example.com",
+        "department": "Engineering",
+        "shift_start": "09:30",
+        "shift_end": "18:30",
+        "joined_on": "2026-01-05",
+    })
+    # Punch in on Oct 10 09:00 UTC
+    t_in = datetime(2026, 10, 10, 9, 0, 0, tzinfo=timezone.utc)
+    client_app.post("/attendance/punch-in", json={
+        "emp_code": "EMP0203",
+        "punched_at": int(t_in.timestamp() * 1000),
+    })
+
+    # Punch out earlier on Oct 9 18:00 UTC -> 404
+    t_early = datetime(2026, 10, 9, 18, 0, 0, tzinfo=timezone.utc)
+    res = client_app.post("/attendance/punch-out", json={
+        "emp_code": "EMP0203",
+        "punched_at": int(t_early.timestamp() * 1000),
+    })
+    assert res.status_code == 404
+
+
+# =========================================================================== #
+# Phase 3: Comprehensive Concurrency Tests (Issue 3)
+# =========================================================================== #
+
+def test_concurrency_two_punch_outs_race(client_app, test_db):
+    """Test A: Two simultaneous punch-outs against one open record -> exactly one 200, one 409."""
+    client_app.post("/employees", json={
+        "emp_code": "EMP0301",
+        "name": "PO Race User",
+        "email": "porace@example.com",
+        "department": "Engineering",
+        "shift_start": "09:30",
+        "shift_end": "18:30",
+        "joined_on": "2026-01-05",
+    })
+    t_in = datetime(2026, 7, 6, 4, 0, 0, tzinfo=timezone.utc)
+    client_app.post("/attendance/punch-in", json={
+        "emp_code": "EMP0301",
+        "punched_at": int(t_in.timestamp() * 1000),
+    })
+
+    t_out1 = int(datetime(2026, 7, 6, 13, 0, 0, tzinfo=timezone.utc).timestamp() * 1000)
+    t_out2 = int(datetime(2026, 7, 6, 13, 30, 0, tzinfo=timezone.utc).timestamp() * 1000)
+
+    def do_po(ts):
+        with TestClient(app) as tc:
+            return tc.post("/attendance/punch-out", json={"emp_code": "EMP0301", "punched_at": ts}).status_code
+
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        f1 = ex.submit(do_po, t_out1)
+        f2 = ex.submit(do_po, t_out2)
+        codes = sorted([f1.result(), f2.result()])
+
+    assert codes == [200, 409]
+    doc = test_db.attendance_logs.find_one({"emp_code": "EMP0301", "date": "2026-07-06"})
+    assert doc["punch_out"] is not None
+    assert doc.get("revision") == 1
+
+
+def test_concurrency_punch_out_vs_regularization(client_app, test_db):
+    """Test C: Simultaneous punch-out and regularization against one open record.
+    Neither operation silently overwrites the other. Revision count strictly matches mutations."""
+    client_app.post("/employees", json={
+        "emp_code": "EMP0302",
+        "name": "PO Patch Race",
+        "email": "popatch@example.com",
+        "department": "Engineering",
+        "shift_start": "09:30",
+        "shift_end": "18:30",
+        "joined_on": "2026-01-05",
+    })
+    t_in = datetime(2026, 7, 6, 4, 0, 0, tzinfo=timezone.utc)
+    client_app.post("/attendance/punch-in", json={
+        "emp_code": "EMP0302",
+        "punched_at": int(t_in.timestamp() * 1000),
+    })
+
+    t_out = int(datetime(2026, 7, 6, 13, 0, 0, tzinfo=timezone.utc).timestamp() * 1000)
+
+    def do_po():
+        with TestClient(app) as tc:
+            return tc.post("/attendance/punch-out", json={"emp_code": "EMP0302", "punched_at": t_out}).status_code
+
+    def do_reg():
+        with TestClient(app) as tc:
+            return tc.patch("/attendance/EMP0302/2026-07-06", json={
+                "status": "WFH",
+                "reason": "Change status while user punches out",
+                "regularized_by": "Manager",
+            }).status_code
+
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        f_po = ex.submit(do_po)
+        f_reg = ex.submit(do_reg)
+        code_po = f_po.result()
+        code_reg = f_reg.result()
+
+    doc = test_db.attendance_logs.find_one({"emp_code": "EMP0302", "date": "2026-07-06"})
+
+    # If both succeeded (serialized execution):
+    if code_po == 200 and code_reg == 200:
+        assert doc.get("revision") == 2
+        assert doc["punch_out"] is not None
+        assert doc["status"] == "WFH"
+        assert len(doc["history"]) == 1
+    # If one raced and caused conflict on the other:
+    elif code_po == 200 and code_reg == 409:
+        assert doc.get("revision") == 1
+        assert doc["punch_out"] is not None
+        assert doc["status"] == "PRESENT"
+        assert len(doc["history"]) == 0
+    elif code_po == 409 and code_reg == 200:
+        assert doc.get("revision") == 1
+        assert doc["punch_out"] is None
+        assert doc["status"] == "WFH"
+        assert len(doc["history"]) == 1
+    else:
+        pytest.fail(f"Unexpected status combination: PO={code_po}, REG={code_reg}")
+
+
+def test_concurrency_legacy_documents_race(client_app, test_db):
+    """Test D: Concurrency race against legacy document without history and without revision."""
+    client_app.post("/employees", json={
+        "emp_code": "EMP0303",
+        "name": "Legacy Race User",
+        "email": "legrace@example.com",
+        "department": "Engineering",
+        "shift_start": "09:30",
+        "shift_end": "18:30",
+        "joined_on": "2026-01-05",
+    })
+    t_in = datetime(2026, 7, 6, 4, 0, 0, tzinfo=timezone.utc)
+    # Seed legacy document without history or revision
+    test_db.attendance_logs.insert_one({
+        "emp_code": "EMP0303",
+        "date": "2026-07-06",
+        "status": "PRESENT",
+        "punch_in": t_in,
+        "punch_out": None,
+    })
+
+    def do_patch(status_val, user_name):
+        with TestClient(app) as tc:
+            return tc.patch("/attendance/EMP0303/2026-07-06", json={
+                "status": status_val,
+                "reason": f"Legacy concurrent update by {user_name}",
+                "regularized_by": user_name,
+            }).status_code
+
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        f1 = ex.submit(do_patch, "WFH", "User 1")
+        f2 = ex.submit(do_patch, "ON_DUTY", "User 2")
+        codes = sorted([f1.result(), f2.result()])
+
+    # Concurrency safe: exactly one succeeds or serialized
+    assert 200 in codes
+    doc = test_db.attendance_logs.find_one({"emp_code": "EMP0303", "date": "2026-07-06"})
+    if codes == [200, 409]:
+        assert len(doc["history"]) == 1
+        assert doc.get("revision") == 1
+    elif codes == [200, 200]:
+        assert len(doc["history"]) == 2
+        assert doc.get("revision") == 2
+
+
+def test_concurrency_unrelated_employees_do_not_block(client_app):
+    """Test E: Concurrent operations for different employees proceed without blocking each other."""
+    client_app.post("/employees", json={
+        "emp_code": "EMP0304",
+        "name": "Emp A",
+        "email": "empa@example.com",
+        "department": "Engineering",
+        "shift_start": "09:30",
+        "shift_end": "18:30",
+        "joined_on": "2026-01-05",
+    })
+    client_app.post("/employees", json={
+        "emp_code": "EMP0305",
+        "name": "Emp B",
+        "email": "empb@example.com",
+        "department": "Engineering",
+        "shift_start": "09:30",
+        "shift_end": "18:30",
+        "joined_on": "2026-01-05",
+    })
+
+    t_in = datetime(2026, 7, 6, 4, 0, 0, tzinfo=timezone.utc)
+    t_in_ms = int(t_in.timestamp() * 1000)
+    client_app.post("/attendance/punch-in", json={"emp_code": "EMP0304", "punched_at": t_in_ms})
+    client_app.post("/attendance/punch-in", json={"emp_code": "EMP0305", "punched_at": t_in_ms})
+
+    t_out_ms = int(datetime(2026, 7, 6, 13, 0, 0, tzinfo=timezone.utc).timestamp() * 1000)
+
+    def do_po(emp_c):
+        with TestClient(app) as tc:
+            return tc.post("/attendance/punch-out", json={"emp_code": emp_c, "punched_at": t_out_ms}).status_code
+
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        f_a = ex.submit(do_po, "EMP0304")
+        f_b = ex.submit(do_po, "EMP0305")
+        codes = [f_a.result(), f_b.result()]
+
+    assert codes == [200, 200]
