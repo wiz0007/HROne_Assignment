@@ -1,5 +1,6 @@
 from datetime import date
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app.main import (
@@ -31,10 +32,46 @@ def test_month_validation_unit():
     y, m, start, end = validate_month_string("2025-02")
     assert end == "2025-02-28"
 
-    # Invalid months
-    for inv in ["2026-13", "2026-00", "2026-7", "2026/07", "invalid", "", None]:
-        with pytest.raises(Exception):
+    # Valid regular February
+    y, m, start, end = validate_month_string("2026-02")
+    assert end == "2026-02-28"
+
+    # Valid boundary years (0001-01 and 9999-12)
+    y, m, start, end = validate_month_string("0001-01")
+    assert y == 1
+    assert m == 1
+    assert start == "0001-01-01"
+    assert end == "0001-01-31"
+
+    y, m, start, end = validate_month_string("9999-12")
+    assert y == 9999
+    assert m == 12
+    assert start == "9999-12-01"
+    assert end == "9999-12-31"
+
+    # Year zero must be rejected with 422 before calling calendar.monthrange
+    with pytest.raises(HTTPException) as exc_info:
+        validate_month_string("0000-01")
+    assert exc_info.value.status_code == 422
+    assert "Year zero" in exc_info.value.detail
+
+    # Invalid months outside 01-12
+    for inv in ["2026-00", "2026-13"]:
+        with pytest.raises(HTTPException) as exc:
             validate_month_string(inv)
+        assert exc.value.status_code == 422
+
+    # Malformed strings
+    for malformed in ["2026-2", "26-02", "2026/07", "invalid", ""]:
+        with pytest.raises(HTTPException) as exc:
+            validate_month_string(malformed)
+        assert exc.value.status_code == 422
+
+    # Non-string input
+    for non_str in [None, 123, [], {}]:
+        with pytest.raises(HTTPException) as exc:
+            validate_month_string(non_str)
+        assert exc.value.status_code == 422
 
 
 def test_round_half_up_rules_unit():
@@ -58,6 +95,15 @@ def test_compute_working_days_unit():
 
     # Weekend only: 2026-07-04 (Sat) to 2026-07-05 (Sun) -> 0 weekdays
     assert compute_working_days(date(2026, 7, 4), date(2026, 7, 5)) == 0
+
+    # Boundary years: 0001-01 (Jan 0001: 31 days, starts Monday -> 23 weekdays)
+    assert compute_working_days(date(1, 1, 1), date(1, 1, 31)) == 23
+
+    # Boundary years: 9999-12 (Dec 9999: 31 days, starts Wednesday -> 23 weekdays)
+    assert compute_working_days(date(9999, 12, 1), date(9999, 12, 31)) == 23
+
+    # Start date after end date returns 0
+    assert compute_working_days(date(2026, 7, 31), date(2026, 7, 1)) == 0
 
 
 # --------------------------------------------------------------------------- #
@@ -299,11 +345,137 @@ def test_monthly_presence_statuses(client_app: TestClient):
     assert data["present_days"] == 2.0  # WFH + ON_DUTY
 
 
-def test_monthly_invalid_parameters(client_app: TestClient):
-    resp = client_app.get("/analytics/employees/EMP0001/monthly?month=2026-13")
+def test_monthly_month_validation_and_boundary_cases(client_app: TestClient):
+    db.employees.insert_one({
+        "emp_code": "EMP_BOUND",
+        "name": "BoundTest",
+        "email": "bound@example.com",
+        "department": "Engineering",
+        "shift_start": "09:30",
+        "shift_end": "18:30",
+        "joined_on": "2026-07-01",
+    })
+
+    # Year 0: must return 422
+    resp = client_app.get("/analytics/employees/EMP_BOUND/monthly?month=0000-01")
     assert resp.status_code == 422
-    resp = client_app.get("/analytics/employees/EMP0001/monthly?month=invalid")
-    assert resp.status_code == 422
+    assert "Year zero" in resp.json()["detail"]
+
+    # Month outside 01-12
+    assert client_app.get("/analytics/employees/EMP_BOUND/monthly?month=2026-00").status_code == 422
+    assert client_app.get("/analytics/employees/EMP_BOUND/monthly?month=2026-13").status_code == 422
+
+    # Malformed strings: 2026-2, 26-02, 2026/07, invalid, empty
+    for bad in ["2026-2", "26-02", "2026/07", "invalid", ""]:
+        assert client_app.get(f"/analytics/employees/EMP_BOUND/monthly?month={bad}").status_code == 422
+
+    # Boundary years: 0001-01 and 9999-12
+    # 0001-01: joined on 2026-07-01 > 0001-01-31 -> working_days = 0, attendance_pct = None
+    resp_0001 = client_app.get("/analytics/employees/EMP_BOUND/monthly?month=0001-01")
+    assert resp_0001.status_code == 200
+    assert resp_0001.json()["working_days"] == 0
+    assert resp_0001.json()["attendance_pct"] is None
+
+    # 9999-12: joined on 2026-07-01 < 9999-12-01 -> working_days = 23, 0 logs -> attendance_pct = 0.0
+    resp_9999 = client_app.get("/analytics/employees/EMP_BOUND/monthly?month=9999-12")
+    assert resp_9999.status_code == 200
+    assert resp_9999.json()["working_days"] == 23
+    assert resp_9999.json()["attendance_pct"] == 0.0
+
+    # 2026-02: regular month (joined in July -> joined after month end -> working_days = 0)
+    resp_feb = client_app.get("/analytics/employees/EMP_BOUND/monthly?month=2026-02")
+    assert resp_feb.status_code == 200
+    assert resp_feb.json()["working_days"] == 0
+    assert resp_feb.json()["attendance_pct"] is None
+
+
+def test_monthly_pre_joining_records_excluded(client_app: TestClient):
+    # Employee joined mid-month on 2026-07-15
+    db.employees.insert_one({
+        "emp_code": "EMP_MID",
+        "name": "MidJoiner",
+        "email": "mid@example.com",
+        "department": "Engineering",
+        "shift_start": "09:30",
+        "shift_end": "18:30",
+        "joined_on": "2026-07-15",
+    })
+
+    # Record before joining date (2026-07-02, Thursday)
+    db.attendance_logs.insert_one({
+        "emp_code": "EMP_MID",
+        "date": "2026-07-02",
+        "status": "PRESENT",
+        "work_hours": 8.0,
+        "late_minutes": 25,
+        "overtime_minutes": 0,
+        "half_day": False,
+    })
+    # Record on joining date (2026-07-15, Wednesday)
+    db.attendance_logs.insert_one({
+        "emp_code": "EMP_MID",
+        "date": "2026-07-15",
+        "status": "PRESENT",
+        "work_hours": 8.0,
+        "late_minutes": 15,
+        "overtime_minutes": 0,
+        "half_day": False,
+    })
+    # Record after joining date (2026-07-16, Thursday)
+    db.attendance_logs.insert_one({
+        "emp_code": "EMP_MID",
+        "date": "2026-07-16",
+        "status": "PRESENT",
+        "work_hours": 8.0,
+        "late_minutes": 0,
+        "overtime_minutes": 0,
+        "half_day": False,
+    })
+
+    resp = client_app.get("/analytics/employees/EMP_MID/monthly?month=2026-07")
+    assert resp.status_code == 200
+    data = resp.json()
+    # Working days: 2026-07-15 to 2026-07-31 -> 13 working days
+    assert data["working_days"] == 13
+    # Only records on or after joined_on count: 2026-07-15 and 2026-07-16 -> 2.0
+    assert data["present_days"] == 2.0
+    # Only 2026-07-15 was late (15 mins); pre-joining 2026-07-02 (25 mins) is excluded
+    assert data["late_count"] == 1
+    assert data["total_late_minutes"] == 15
+    # Attendance percentage = 2.0 / 13 * 100 = 15.38%
+    assert data["attendance_pct"] == 15.38
+
+
+def test_monthly_employee_joined_after_month_end(client_app: TestClient):
+    # Employee joined in August 2026
+    db.employees.insert_one({
+        "emp_code": "EMP_POST_MONTH",
+        "name": "PostMonth",
+        "email": "post@example.com",
+        "department": "Engineering",
+        "shift_start": "09:30",
+        "shift_end": "18:30",
+        "joined_on": "2026-08-01",
+    })
+    # Stray attendance record in July
+    db.attendance_logs.insert_one({
+        "emp_code": "EMP_POST_MONTH",
+        "date": "2026-07-20",
+        "status": "PRESENT",
+        "work_hours": 8.0,
+        "late_minutes": 30,
+        "overtime_minutes": 0,
+        "half_day": False,
+    })
+
+    resp = client_app.get("/analytics/employees/EMP_POST_MONTH/monthly?month=2026-07")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["working_days"] == 0
+    assert data["present_days"] == 0.0
+    assert data["late_count"] == 0
+    assert data["total_late_minutes"] == 0
+    assert data["attendance_pct"] is None
 
 
 # --------------------------------------------------------------------------- #
@@ -429,6 +601,89 @@ def test_dept_summary_case_sensitive(client_app: TestClient):
     assert resp.json()["items"] == []
 
 
+def test_dept_summary_pre_joining_records_excluded(client_app: TestClient):
+    # Employee joined mid-month on 2026-07-15 in Sales dept
+    db.employees.insert_one({
+        "emp_code": "EMP_DEPT_MID",
+        "name": "DeptMid",
+        "email": "deptmid@example.com",
+        "department": "Sales",
+        "shift_start": "09:30",
+        "shift_end": "18:30",
+        "joined_on": "2026-07-15",
+    })
+
+    # Record before joining date (2026-07-02)
+    db.attendance_logs.insert_one({
+        "emp_code": "EMP_DEPT_MID",
+        "date": "2026-07-02",
+        "status": "PRESENT",
+        "work_hours": 9.0,
+        "late_minutes": 40,
+        "overtime_minutes": 0,
+        "half_day": False,
+    })
+    # Record on joining date (2026-07-15)
+    db.attendance_logs.insert_one({
+        "emp_code": "EMP_DEPT_MID",
+        "date": "2026-07-15",
+        "status": "PRESENT",
+        "work_hours": 8.0,
+        "late_minutes": 20,
+        "overtime_minutes": 0,
+        "half_day": False,
+    })
+    # Record after joining date (2026-07-16)
+    db.attendance_logs.insert_one({
+        "emp_code": "EMP_DEPT_MID",
+        "date": "2026-07-16",
+        "status": "PRESENT",
+        "work_hours": 8.0,
+        "late_minutes": 0,
+        "overtime_minutes": 0,
+        "half_day": False,
+    })
+
+    resp = client_app.get("/analytics/departments/summary?month=2026-07&department=Sales")
+    assert resp.status_code == 200
+    data = resp.json()["items"][0]
+
+    assert data["headcount"] == 1
+    # Pre-joining record excluded: only 2026-07-15 and 2026-07-16 included -> 2.0
+    assert data["present_days"] == 2.0
+    # Pre-joining record excluded: only 2026-07-15 late -> 1
+    assert data["late_count"] == 1
+    assert data["total_late_minutes"] == 20
+    # avg_work_hours = (8.0 + 8.0) / 2 = 8.00 (9.0 from 2026-07-02 is excluded)
+    assert data["avg_work_hours"] == 8.0
+
+
+def test_dept_summary_month_validation_and_boundaries(client_app: TestClient):
+    db.employees.insert_one({
+        "emp_code": "EMP_DS_VAL",
+        "name": "ValTest",
+        "email": "val@example.com",
+        "department": "Legal",
+        "shift_start": "09:30",
+        "shift_end": "18:30",
+        "joined_on": "2026-07-01",
+    })
+    # Year 0 returns 422
+    assert client_app.get("/analytics/departments/summary?month=0000-01").status_code == 422
+    # Month outside 01-12 returns 422
+    assert client_app.get("/analytics/departments/summary?month=2026-00").status_code == 422
+    assert client_app.get("/analytics/departments/summary?month=2026-13").status_code == 422
+    # Boundary years
+    resp_0001 = client_app.get("/analytics/departments/summary?month=0001-01")
+    assert resp_0001.status_code == 200
+    assert resp_0001.json()["items"] == []
+
+    resp_9999 = client_app.get("/analytics/departments/summary?month=9999-12&department=Legal")
+    assert resp_9999.status_code == 200
+    assert len(resp_9999.json()["items"]) == 1
+    assert resp_9999.json()["items"][0]["headcount"] == 1
+
+
 # --------------------------------------------------------------------------- #
 # Endpoint C: GET /analytics/leaderboard/late
 # --------------------------------------------------------------------------- #
@@ -534,8 +789,63 @@ def test_leaderboard_validation(client_app: TestClient):
     assert resp0.status_code == 422
     resp51 = client_app.get("/analytics/leaderboard/late?month=2026-07&limit=51")
     assert resp51.status_code == 422
-    resp_inv_m = client_app.get("/analytics/leaderboard/late?month=2026-13")
-    assert resp_inv_m.status_code == 422
+
+    # Year 0 and invalid months
+    assert client_app.get("/analytics/leaderboard/late?month=0000-01").status_code == 422
+    assert client_app.get("/analytics/leaderboard/late?month=2026-00").status_code == 422
+    assert client_app.get("/analytics/leaderboard/late?month=2026-13").status_code == 422
+
+    # Boundary years
+    resp_0001 = client_app.get("/analytics/leaderboard/late?month=0001-01")
+    assert resp_0001.status_code == 200
+    assert resp_0001.json()["items"] == []
+
+    resp_9999 = client_app.get("/analytics/leaderboard/late?month=9999-12")
+    assert resp_9999.status_code == 200
+    assert resp_9999.json()["items"] == []
+
+
+def test_leaderboard_pre_joining_records_excluded(client_app: TestClient):
+    # Mid-month joiner: joined 2026-07-15
+    db.employees.insert_one({
+        "emp_code": "EMP_LEAD_MID",
+        "name": "LeadMid",
+        "email": "leadmid@test.com",
+        "department": "Engineering",
+        "shift_start": "09:00",
+        "shift_end": "18:00",
+        "joined_on": "2026-07-15",
+    })
+    # Future joiner: joined 2026-08-01
+    db.employees.insert_one({
+        "emp_code": "EMP_LEAD_FUT",
+        "name": "LeadFut",
+        "email": "leadfut@test.com",
+        "department": "Engineering",
+        "shift_start": "09:00",
+        "shift_end": "18:00",
+        "joined_on": "2026-08-01",
+    })
+
+    db.attendance_logs.insert_many([
+        # EMP_LEAD_MID: pre-joining record (2026-07-02) -> 60 min late
+        {"emp_code": "EMP_LEAD_MID", "date": "2026-07-02", "status": "PRESENT", "late_minutes": 60},
+        # EMP_LEAD_MID: post-joining record (2026-07-16) -> 20 min late
+        {"emp_code": "EMP_LEAD_MID", "date": "2026-07-16", "status": "PRESENT", "late_minutes": 20},
+        # EMP_LEAD_FUT: stray record before joining (2026-07-20) -> 90 min late
+        {"emp_code": "EMP_LEAD_FUT", "date": "2026-07-20", "status": "PRESENT", "late_minutes": 90},
+    ])
+
+    resp = client_app.get("/analytics/leaderboard/late?month=2026-07")
+    assert resp.status_code == 200
+    items = resp.json()["items"]
+    # EMP_LEAD_FUT is excluded completely because they joined after July!
+    # EMP_LEAD_MID is included with only the post-joining late log (20 min, count 1)
+    assert len(items) == 1
+    assert items[0]["emp_code"] == "EMP_LEAD_MID"
+    assert items[0]["total_late_minutes"] == 20
+    assert items[0]["late_count"] == 1
+    assert items[0]["rank"] == 1
 
 
 # --------------------------------------------------------------------------- #
