@@ -95,6 +95,8 @@ def validate_month_string(month: Optional[str]) -> tuple[int, int, str, str]:
     if not month or not isinstance(month, str) or not MONTH_REGEX.match(month):
         raise HTTPException(422, f"Invalid month format: '{month}'. Expected YYYY-MM")
     year = int(month[:4])
+    if year == 0:
+        raise HTTPException(422, f"Invalid month: '{month}'. Year zero is not a valid calendar year")
     month_num = int(month[5:7])
     last_day = calendar.monthrange(year, month_num)[1]
     month_start = f"{year:04d}-{month_num:02d}-01"
@@ -108,12 +110,12 @@ def compute_working_days(start_date: date, end_date: date) -> int:
     """
     if start_date > end_date:
         return 0
-    cur = start_date
-    count = 0
-    while cur <= end_date:
-        if cur.weekday() < 5:
+    total_days = (end_date - start_date).days + 1
+    full_weeks, rem_days = divmod(total_days, 7)
+    count = full_weeks * 5
+    for i in range(rem_days):
+        if (start_date.weekday() + i) % 7 < 5:
             count += 1
-        cur += timedelta(days=1)
     return count
 
 
@@ -800,82 +802,89 @@ def get_employee_monthly(
 
     if emp_joined > m_end:
         working_days = 0
-    else:
-        effective_start = max(emp_joined, m_start)
-        working_days = compute_working_days(effective_start, m_end)
-
-    # 3. Aggregate matching employee attendance rows within month
-    pipeline = [
-        {
-            "$match": {
-                "emp_code": emp_code,
-                "date": {"$gte": month_start, "$lte": month_end},
-            }
-        },
-        {
-            "$project": {
-                "date": 1,
-                "status": 1,
-                "late_minutes": {"$ifNull": ["$late_minutes", 0]},
-                "overtime_minutes": {"$ifNull": ["$overtime_minutes", 0]},
-                "half_day": {"$ifNull": ["$half_day", False]},
-                "day_of_week": {
-                    "$isoDayOfWeek": {
-                        "$dateFromString": {"dateString": "$date"}
-                    }
-                },
-            }
-        },
-        {
-            "$group": {
-                "_id": None,
-                "present_days": {
-                    "$sum": {
-                        "$cond": [
-                            {
-                                "$and": [
-                                    {"$in": ["$day_of_week", [1, 2, 3, 4, 5]]},
-                                    {"$in": ["$status", ["PRESENT", "WFH", "ON_DUTY"]]},
-                                ]
-                            },
-                            {"$cond": ["$half_day", 0.5, 1.0]},
-                            0.0,
-                        ]
-                    }
-                },
-                "leave_days": {
-                    "$sum": {"$cond": [{"$eq": ["$status", "LEAVE"]}, 1, 0]}
-                },
-                "late_count": {
-                    "$sum": {"$cond": [{"$gt": ["$late_minutes", 0]}, 1, 0]}
-                },
-                "total_late_minutes": {"$sum": "$late_minutes"},
-                "total_overtime_minutes": {"$sum": "$overtime_minutes"},
-            }
-        },
-    ]
-
-    agg_res = list(db.attendance_logs.aggregate(pipeline))
-    if agg_res:
-        doc = agg_res[0]
-        present_days = float(doc.get("present_days", 0.0))
-        leave_days = int(doc.get("leave_days", 0))
-        late_count = int(doc.get("late_count", 0))
-        total_late_minutes = int(doc.get("total_late_minutes", 0))
-        total_overtime_minutes = int(doc.get("total_overtime_minutes", 0))
-    else:
         present_days = 0.0
         leave_days = 0
         late_count = 0
         total_late_minutes = 0
         total_overtime_minutes = 0
-
-    # 4. attendance_pct = present_days / working_days * 100, rounded HALF_UP to 2 decimals; return null when working_days = 0
-    if working_days == 0:
         attendance_pct = None
     else:
-        raw_pct = (present_days / working_days) * 100.0
-        attendance_pct = round_half_up_2(raw_pct)
+        effective_start = max(emp_joined, m_start)
+        effective_start_str = effective_start.isoformat()
+        working_days = compute_working_days(effective_start, m_end)
+
+        # 3. Aggregate matching employee attendance rows within month on or after joined_on
+        pipeline = [
+            {
+                "$match": {
+                    "emp_code": emp_code,
+                    "date": {"$gte": effective_start_str, "$lte": month_end},
+                }
+            },
+            {
+                "$project": {
+                    "date": 1,
+                    "status": 1,
+                    "late_minutes": {"$ifNull": ["$late_minutes", 0]},
+                    "overtime_minutes": {"$ifNull": ["$overtime_minutes", 0]},
+                    "half_day": {"$ifNull": ["$half_day", False]},
+                    "day_of_week": {
+                        "$isoDayOfWeek": {
+                            "$dateFromString": {"dateString": "$date"}
+                        }
+                    },
+                }
+            },
+            {
+                "$group": {
+                    "_id": None,
+                    "present_days": {
+                        "$sum": {
+                            "$cond": [
+                                {
+                                    "$and": [
+                                        {"$in": ["$day_of_week", [1, 2, 3, 4, 5]]},
+                                        {"$in": ["$status", ["PRESENT", "WFH", "ON_DUTY"]]},
+                                    ]
+                                },
+                                {"$cond": ["$half_day", 0.5, 1.0]},
+                                0.0,
+                            ]
+                        }
+                    },
+                    "leave_days": {
+                        "$sum": {"$cond": [{"$eq": ["$status", "LEAVE"]}, 1, 0]}
+                    },
+                    "late_count": {
+                        "$sum": {"$cond": [{"$gt": ["$late_minutes", 0]}, 1, 0]}
+                    },
+                    "total_late_minutes": {"$sum": "$late_minutes"},
+                    "total_overtime_minutes": {"$sum": "$overtime_minutes"},
+                }
+            },
+        ]
+
+        agg_res = list(db.attendance_logs.aggregate(pipeline))
+        if agg_res:
+            doc = agg_res[0]
+            present_days = float(doc.get("present_days", 0.0))
+            leave_days = int(doc.get("leave_days", 0))
+            late_count = int(doc.get("late_count", 0))
+            total_late_minutes = int(doc.get("total_late_minutes", 0))
+            total_overtime_minutes = int(doc.get("total_overtime_minutes", 0))
+        else:
+            present_days = 0.0
+            leave_days = 0
+            late_count = 0
+            total_late_minutes = 0
+            total_overtime_minutes = 0
+
+        # 4. attendance_pct = present_days / working_days * 100, rounded HALF_UP to 2 decimals; return null when working_days = 0
+        if working_days == 0:
+            attendance_pct = None
+        else:
+            raw_pct = (present_days / working_days) * 100.0
+            attendance_pct = round_half_up_2(raw_pct)
 
     return {
         "emp_code": emp_code,
@@ -910,7 +919,7 @@ def get_department_summary(
         {
             "$lookup": {
                 "from": "attendance_logs",
-                "let": {"emp": "$emp_code"},
+                "let": {"emp": "$emp_code", "joined": "$joined_on"},
                 "pipeline": [
                     {
                         "$match": {
@@ -918,6 +927,7 @@ def get_department_summary(
                                 "$and": [
                                     {"$eq": ["$emp_code", "$$emp"]},
                                     {"$gte": ["$date", month_start]},
+                                    {"$gte": ["$date", "$$joined"]},
                                     {"$lte": ["$date", month_end]},
                                 ]
                             }
@@ -1076,28 +1086,36 @@ def get_late_leaderboard(
             }
         },
         {
-            "$group": {
-                "_id": "$emp_code",
-                "total_late_minutes": {"$sum": "$late_minutes"},
-                "late_count": {"$sum": 1},
-            }
-        },
-        {"$match": {"total_late_minutes": {"$gt": 0}}},
-        {
             "$lookup": {
                 "from": "employees",
-                "localField": "_id",
+                "localField": "emp_code",
                 "foreignField": "emp_code",
                 "as": "emp",
             }
         },
         {"$unwind": "$emp"},
+        {
+            "$match": {
+                "$expr": {
+                    "$gte": ["$date", "$emp.joined_on"]
+                }
+            }
+        },
     ]
 
     if department is not None:
         pipeline.append({"$match": {"emp.department": department}})
 
     pipeline.extend([
+        {
+            "$group": {
+                "_id": "$emp_code",
+                "emp": {"$first": "$emp"},
+                "total_late_minutes": {"$sum": "$late_minutes"},
+                "late_count": {"$sum": 1},
+            }
+        },
+        {"$match": {"total_late_minutes": {"$gt": 0}}},
         {
             "$setWindowFields": {
                 "sortBy": {"total_late_minutes": -1},
