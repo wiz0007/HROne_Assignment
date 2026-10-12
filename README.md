@@ -76,7 +76,7 @@ All tests run against an isolated, disposable test database (`attendance_test_<u
 
 ```bash
 # Run complete test suite with verbose output
-python -m pytest tests/test_sprint1.py -v
+python -m pytest -v
 
 # Byte-compile check
 python -m compileall -q app tests
@@ -93,8 +93,14 @@ python -m compileall -q app tests
   - Attendance punch-in (`POST /attendance/punch-in`) with business rules R1 (overnight shifts, IST timezone, truncation), R2 (10-minute grace period boundary), and race-condition prevention via compound unique index.
   - Attendance listing (`GET /attendance`) with database-level pagination, sorting, and strict calendar-date validation.
   - Comprehensive defect analysis recorded in `REVIEW.md`.
-- **Sprint 2 & Later (Planned)**:
-  - `POST /attendance/punch-out`
-  - `PATCH /attendance/{emp_code}/{date}` (regularization with audit history)
-  - Analytics aggregation pipelines (`/analytics/*`)
-  - Admin query explain endpoint (`/admin/explain/*`)
+- **Sprint 2 (Complete)**:
+  - Attendance punch-out (`POST /attendance/punch-out`) with temporal validation, shift window bounding, atomic closure, work hours (R4), overtime (R3), and half-day (R5) calculations.
+  - Manual regularization (`PATCH /attendance/{emp_code}/{date}`) with immutable audit history, field-level diff calculation, and optimistic concurrency control.
+- **Sprint 3 (Complete)**:
+  - Monthly attendance summary (`GET /analytics/employees/{emp_code}/monthly`) backed by MongoDB aggregation pipeline.
+  - Department summary (`GET /analytics/departments/summary`) with cross-collection totals, record-weighted average work hours, and zero-log headcount accounting.
+  - Late-comers leaderboard (`GET /analytics/leaderboard/late`) with competition ranking (`$rank`), tie preservation at cutoff limits, and department isolation.
+  - Daily department attendance trend (`GET /analytics/departments/{department}/trend`) featuring dense MongoDB-generated calendar series, point-in-time headcounts, and a 7-day trailing moving average window.
+- **Sprint 4 & Later (Planned)**:
+  - Admin query explain endpoint (`GET /admin/explain/{endpoint}`)
+  - Performance benchmarking on 100k+ records
