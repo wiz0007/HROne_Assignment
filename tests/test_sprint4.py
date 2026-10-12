@@ -361,10 +361,197 @@ def test_create_required_indexes_fail_fast():
 
 
 # --------------------------------------------------------------------------- #
-# 6. Index Scanning (IXSCAN) Verification on Realistic Dataset
+# 6. Robust Query Plan & ExecutionStats Traversal Helper
 # --------------------------------------------------------------------------- #
-def test_explain_uses_ixscan(client_app, test_db):
-    # Populate a realistic mini-dataset
+def extract_plan_info(explain_doc: dict) -> dict:
+    """
+    Traverses explain output across find queries and aggregation pipelines,
+    identifying the winning plan, extracting its stage hierarchy, isolating
+    rejected candidate plans, and recording executionStats.
+    """
+    winning_plan = {}
+    rejected_plans = []
+    exec_stats = {}
+    lookup_indexes = []
+
+    # Case A: Top-level queryPlanner (find queries or SBE aggregations)
+    if "queryPlanner" in explain_doc:
+        qp = explain_doc["queryPlanner"]
+        wp = qp.get("winningPlan", {})
+        winning_plan = wp.get("queryPlan", wp)
+        rejected_plans = qp.get("rejectedPlans", [])
+
+    # Case B: Top-level executionStats
+    if "executionStats" in explain_doc:
+        es = explain_doc["executionStats"]
+        exec_stats = {
+            "nReturned": es.get("nReturned", 0),
+            "totalKeysExamined": es.get("totalKeysExamined", 0),
+            "totalDocsExamined": es.get("totalDocsExamined", 0),
+            "executionTimeMillis": es.get("executionTimeMillis", 0),
+        }
+
+    # Case C: Aggregation pipeline stages
+    if "stages" in explain_doc:
+        for stg in explain_doc["stages"]:
+            if "$cursor" in stg:
+                c = stg["$cursor"]
+                if not winning_plan and "queryPlanner" in c:
+                    qp = c["queryPlanner"]
+                    wp = qp.get("winningPlan", {})
+                    winning_plan = wp.get("queryPlan", wp)
+                    rejected_plans = qp.get("rejectedPlans", [])
+                if not exec_stats and "executionStats" in c:
+                    es = c["executionStats"]
+                    exec_stats = {
+                        "nReturned": es.get("nReturned", 0),
+                        "totalKeysExamined": es.get("totalKeysExamined", 0),
+                        "totalDocsExamined": es.get("totalDocsExamined", 0),
+                        "executionTimeMillis": es.get("executionTimeMillis", 0),
+                    }
+            if "$lookup" in stg and "indexesUsed" in stg["$lookup"]:
+                lookup_indexes.extend(stg["$lookup"]["indexesUsed"])
+
+    def get_stages(node):
+        stages = []
+        if isinstance(node, dict):
+            if "stage" in node and node["stage"]:
+                stages.append(str(node["stage"]).upper())
+            for k in ("inputStage", "outerStage", "innerStage"):
+                if k in node:
+                    stages.extend(get_stages(node[k]))
+            if "inputStages" in node:
+                for s in node["inputStages"]:
+                    stages.extend(get_stages(s))
+        return stages
+
+    def get_indexes(node):
+        idx = []
+        if isinstance(node, dict):
+            if "indexName" in node and node["indexName"]:
+                idx.append(node["indexName"])
+            for k in ("inputStage", "outerStage", "innerStage"):
+                if k in node:
+                    idx.extend(get_indexes(node[k]))
+            if "inputStages" in node:
+                for s in node["inputStages"]:
+                    idx.extend(get_indexes(s))
+        return idx
+
+    plan_stages = get_stages(winning_plan)
+    indexes_used = list(set(get_indexes(winning_plan) + lookup_indexes))
+
+    return {
+        "winning_plan": winning_plan,
+        "rejected_plans": rejected_plans,
+        "plan_stages": plan_stages,
+        "indexes_used": indexes_used,
+        "exec_stats": exec_stats,
+    }
+
+
+def test_extract_plan_info_find_structure():
+    mock_explain = {
+        "queryPlanner": {
+            "winningPlan": {
+                "stage": "FETCH",
+                "inputStage": {
+                    "stage": "IXSCAN",
+                    "indexName": "emp_code_1_date_1",
+                },
+            },
+            "rejectedPlans": [
+                {"stage": "COLLSCAN"},
+            ],
+        },
+        "executionStats": {
+            "nReturned": 5,
+            "totalKeysExamined": 5,
+            "totalDocsExamined": 5,
+            "executionTimeMillis": 1,
+        },
+    }
+    info = extract_plan_info(mock_explain)
+    assert info["plan_stages"] == ["FETCH", "IXSCAN"]
+    assert info["indexes_used"] == ["emp_code_1_date_1"]
+    assert info["exec_stats"]["nReturned"] == 5
+    assert len(info["rejected_plans"]) == 1
+    # Ensure rejected plan's COLLSCAN is isolated from winning plan stages
+    assert "COLLSCAN" not in info["plan_stages"]
+
+
+def test_extract_plan_info_sbe_nested_structure():
+    mock_sbe_explain = {
+        "queryPlanner": {
+            "winningPlan": {
+                "queryPlan": {
+                    "stage": "GROUP",
+                    "inputStage": {
+                        "stage": "FETCH",
+                        "inputStage": {
+                            "stage": "IXSCAN",
+                            "indexName": "date_1_late_minutes_1",
+                        },
+                    },
+                },
+            },
+        },
+        "executionStats": {
+            "nReturned": 1,
+            "totalKeysExamined": 10,
+            "totalDocsExamined": 10,
+            "executionTimeMillis": 3,
+        },
+    }
+    info = extract_plan_info(mock_sbe_explain)
+    assert info["plan_stages"] == ["GROUP", "FETCH", "IXSCAN"]
+    assert info["indexes_used"] == ["date_1_late_minutes_1"]
+
+
+def test_extract_plan_info_aggregation_stages_and_lookup():
+    mock_agg_explain = {
+        "stages": [
+            {
+                "$cursor": {
+                    "queryPlanner": {
+                        "winningPlan": {
+                            "stage": "PROJECTION_SIMPLE",
+                            "inputStage": {
+                                "stage": "FETCH",
+                                "inputStage": {
+                                    "stage": "IXSCAN",
+                                    "indexName": "department_1_joined_on_1",
+                                },
+                            },
+                        },
+                    },
+                    "executionStats": {
+                        "nReturned": 3,
+                        "totalKeysExamined": 3,
+                        "totalDocsExamined": 3,
+                        "executionTimeMillis": 4,
+                    },
+                },
+            },
+            {
+                "$lookup": {
+                    "indexesUsed": ["emp_code_1_date_1"],
+                },
+            },
+        ],
+    }
+    info = extract_plan_info(mock_agg_explain)
+    assert info["plan_stages"] == ["PROJECTION_SIMPLE", "FETCH", "IXSCAN"]
+    assert "department_1_joined_on_1" in info["indexes_used"]
+    assert "emp_code_1_date_1" in info["indexes_used"]
+    assert info["exec_stats"]["nReturned"] == 3
+
+
+# --------------------------------------------------------------------------- #
+# 7. Index Scanning (IXSCAN) & ExecutionStats Verification on Real Database
+# --------------------------------------------------------------------------- #
+def test_explain_uses_ixscan_with_plan_traversal(client_app, test_db):
+    # Populate a representative test dataset (20 employees across 2 departments, 14 days of logs)
     employees = [
         {
             "emp_code": f"EMP{i:04d}",
@@ -396,33 +583,57 @@ def test_explain_uses_ixscan(client_app, test_db):
             })
     test_db.attendance_logs.insert_many(attendance)
 
-    # 1. attendance_list: query on emp_code and date range must use IXSCAN
+    # 1. attendance_list: query on emp_code and date range must use IXSCAN on emp_code_1_date_1
     res1 = client_app.get("/admin/explain/attendance_list?emp_code=EMP0001&date_from=2026-03-01&date_to=2026-03-10")
     assert res1.status_code == 200
-    explain1_str = str(res1.json()["explain"])
-    assert "IXSCAN" in explain1_str
-    assert "COLLSCAN" not in explain1_str
+    info1 = extract_plan_info(res1.json()["explain"])
+    assert any("IXSCAN" in s or "IXSEEK" in s for s in info1["plan_stages"])
+    assert "COLLSCAN" not in info1["plan_stages"]
+    assert "emp_code_1_date_1" in info1["indexes_used"]
+    assert info1["exec_stats"]["totalDocsExamined"] <= 10
+    assert info1["exec_stats"]["nReturned"] == 10
 
-    # 2. employee_monthly: aggregation match on emp_code and date range must use IXSCAN
+    # 2. employee_monthly: aggregation match on emp_code and date range must use IXSCAN on emp_code_1_date_1
     res2 = client_app.get("/admin/explain/employee_monthly?emp_code=EMP0001&month=2026-03")
     assert res2.status_code == 200
-    explain2_str = str(res2.json()["explain"])
-    assert "IXSCAN" in explain2_str
+    info2 = extract_plan_info(res2.json()["explain"])
+    assert any("IXSCAN" in s or "IXSEEK" in s for s in info2["plan_stages"])
+    assert "COLLSCAN" not in info2["plan_stages"]
+    assert "emp_code_1_date_1" in info2["indexes_used"]
+    assert info2["exec_stats"]["totalDocsExamined"] <= 14
 
-    # 3. department_summary: match on department and joined_on must use IXSCAN
+    # 3. department_summary: match on department and joined_on must use IXSCAN on department_1_joined_on_1
     res3 = client_app.get("/admin/explain/department_summary?month=2026-03&department=Engineering")
     assert res3.status_code == 200
-    explain3_str = str(res3.json()["explain"])
-    assert "IXSCAN" in explain3_str
+    info3 = extract_plan_info(res3.json()["explain"])
+    assert any("IXSCAN" in s or "IXSEEK" in s for s in info3["plan_stages"])
+    assert "COLLSCAN" not in info3["plan_stages"]
+    assert any("department" in idx for idx in info3["indexes_used"])
+    assert info3["exec_stats"]["totalDocsExamined"] <= 10
 
-    # 4. late_leaderboard: match on date and late_minutes must use IXSCAN
+    # 4. late_leaderboard: match on date and late_minutes must use IXSCAN on date_1_late_minutes_1
     res4 = client_app.get("/admin/explain/late_leaderboard?month=2026-03&department=Engineering")
     assert res4.status_code == 200
-    explain4_str = str(res4.json()["explain"])
-    assert "IXSCAN" in explain4_str
+    info4 = extract_plan_info(res4.json()["explain"])
+    assert any("IXSCAN" in s or "IXSEEK" in s for s in info4["plan_stages"])
+    assert "COLLSCAN" not in info4["plan_stages"]
+    assert "date_1_late_minutes_1" in info4["indexes_used"]
 
-    # 5. department_trend: match on department must use IXSCAN
+    # 5. department_trend: initial match on department must use indexed scan on department
     res5 = client_app.get("/admin/explain/department_trend?department=Engineering&from=2026-03-01&to=2026-03-07")
     assert res5.status_code == 200
-    explain5_str = str(res5.json()["explain"])
-    assert "IXSCAN" in explain5_str
+    info5 = extract_plan_info(res5.json()["explain"])
+    assert any("IXSCAN" in s or "IXSEEK" in s for s in info5["plan_stages"])
+    assert "COLLSCAN" not in info5["plan_stages"]
+    assert any("department" in idx for idx in info5["indexes_used"])
+
+
+def test_explain_database_error_handling(client_app, monkeypatch):
+    from app.main import db
+    def mock_command_fail(*args, **kwargs):
+        raise RuntimeError("Simulated database timeout or connectivity failure")
+
+    monkeypatch.setattr(db, "command", mock_command_fail)
+    res = client_app.get("/admin/explain/attendance_list")
+    assert res.status_code == 500
+    assert "Database explain command failed" in res.json()["detail"]

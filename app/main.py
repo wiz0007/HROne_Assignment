@@ -1548,7 +1548,11 @@ def explain_endpoint(
     else:
         raise HTTPException(422, f"Unknown explain endpoint: {endpoint}")
 
-    explain_doc = db.command(command)
+    try:
+        explain_doc = db.command(command)
+    except Exception as exc:
+        raise HTTPException(500, f"Database explain command failed: {exc}") from exc
+
     return {
         "endpoint": endpoint.value,
         "collection": collection_name,
