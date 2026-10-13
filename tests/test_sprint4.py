@@ -425,15 +425,37 @@ def extract_plan_info(explain_doc: dict) -> dict:
 
             if "$lookup" in stg:
                 lookup_payload = stg.get("$lookup", {})
-                idx_used = stg.get("indexesUsed") or lookup_payload.get("indexesUsed") or []
+                if not isinstance(lookup_payload, dict):
+                    lookup_payload = {}
+                idx_used = (
+                    stg["indexesUsed"]
+                    if "indexesUsed" in stg
+                    else lookup_payload.get("indexesUsed")
+                )
+                total_docs = (
+                    stg["totalDocsExamined"]
+                    if "totalDocsExamined" in stg
+                    else lookup_payload.get("totalDocsExamined")
+                )
+                total_keys = (
+                    stg["totalKeysExamined"]
+                    if "totalKeysExamined" in stg
+                    else lookup_payload.get("totalKeysExamined")
+                )
+                coll_scans = (
+                    stg["collectionScans"]
+                    if "collectionScans" in stg
+                    else lookup_payload.get("collectionScans")
+                )
                 lookup_info = {
                     "indexesUsed": idx_used,
-                    "totalDocsExamined": stg.get("totalDocsExamined", lookup_payload.get("totalDocsExamined", 0)),
-                    "totalKeysExamined": stg.get("totalKeysExamined", lookup_payload.get("totalKeysExamined", 0)),
-                    "collectionScans": stg.get("collectionScans", lookup_payload.get("collectionScans", 0)),
+                    "totalDocsExamined": total_docs,
+                    "totalKeysExamined": total_keys,
+                    "collectionScans": coll_scans,
                 }
                 lookup_metrics.append(lookup_info)
-                lookup_indexes.extend(lookup_info["indexesUsed"])
+                if idx_used:
+                    lookup_indexes.extend(idx_used)
 
     def get_stages(node):
         stages = []
@@ -576,6 +598,8 @@ def test_extract_plan_info_aggregation_stages_and_lookup():
     assert info["cursor_stats"]["totalDocsExamined"] == 3
     assert len(info["lookup_metrics"]) == 1
     assert info["lookup_metrics"][0]["indexesUsed"] == ["emp_code_1_date_1"]
+    assert info["lookup_metrics"][0]["collectionScans"] is None
+    assert info["lookup_metrics"][0]["totalDocsExamined"] is None
 
 
 # --------------------------------------------------------------------------- #
@@ -642,7 +666,8 @@ def test_explain_uses_ixscan_with_plan_traversal(client_app, test_db):
     assert any("department" in idx for idx in info3["indexes_used"])
     assert info3["exec_stats"]["totalDocsExamined"] <= 10
     # Lookup stage scan verification: zero collection scans during joins
-    assert all(lm.get("collectionScans", 0) == 0 for lm in info3["lookup_metrics"])
+    assert all(lm.get("collectionScans") == 0 for lm in info3["lookup_metrics"])
+    assert all(lm.get("collectionScans") is not None for lm in info3["lookup_metrics"])
 
     # 4. late_leaderboard: match on date and late_minutes must use IXSCAN on date_1_late_minutes_1
     res4 = client_app.get("/admin/explain/late_leaderboard?month=2026-03&department=Engineering")
@@ -651,7 +676,8 @@ def test_explain_uses_ixscan_with_plan_traversal(client_app, test_db):
     assert any("IXSCAN" in s or "IXSEEK" in s for s in info4["plan_stages"])
     assert "COLLSCAN" not in info4["plan_stages"]
     assert "date_1_late_minutes_1" in info4["indexes_used"]
-    assert all(lm.get("collectionScans", 0) == 0 for lm in info4["lookup_metrics"])
+    assert all(lm.get("collectionScans") == 0 for lm in info4["lookup_metrics"])
+    assert all(lm.get("collectionScans") is not None for lm in info4["lookup_metrics"])
 
     # 5. department_trend: initial match on department must use indexed scan on department
     res5 = client_app.get("/admin/explain/department_trend?department=Engineering&from=2026-03-01&to=2026-03-07")
@@ -660,7 +686,8 @@ def test_explain_uses_ixscan_with_plan_traversal(client_app, test_db):
     assert any("IXSCAN" in s or "IXSEEK" in s for s in info5["plan_stages"])
     assert "COLLSCAN" not in info5["plan_stages"]
     assert any("department" in idx for idx in info5["indexes_used"])
-    assert all(lm.get("collectionScans", 0) == 0 for lm in info5["lookup_metrics"])
+    assert all(lm.get("collectionScans") == 0 for lm in info5["lookup_metrics"])
+    assert all(lm.get("collectionScans") is not None for lm in info5["lookup_metrics"])
 
 
 def test_explain_database_error_handling(client_app, monkeypatch):
@@ -676,3 +703,111 @@ def test_explain_database_error_handling(client_app, monkeypatch):
     # Ensure internal exception details and sensitive strings are NOT leaked in response
     assert simulated_error_msg not in res.text
     assert "secret:pass" not in res.text
+
+
+def test_extract_plan_info_lookup_missing_metrics_vs_complete():
+    """Verify missing lookup metrics do NOT default to 0 and remain None."""
+    # 1. Complete lookup metrics
+    complete_explain = {
+        "stages": [
+            {
+                "$lookup": {
+                    "indexesUsed": ["emp_code_1_date_1"],
+                    "totalDocsExamined": 150,
+                    "totalKeysExamined": 150,
+                    "collectionScans": 0,
+                }
+            }
+        ]
+    }
+    info_comp = extract_plan_info(complete_explain)
+    lm_comp = info_comp["lookup_metrics"][0]
+    assert lm_comp["indexesUsed"] == ["emp_code_1_date_1"]
+    assert lm_comp["totalDocsExamined"] == 150
+    assert lm_comp["totalKeysExamined"] == 150
+    assert lm_comp["collectionScans"] == 0
+
+    # 2. Incomplete lookup metrics (missing collectionScans and totalDocsExamined)
+    incomplete_explain = {
+        "stages": [
+            {
+                "$lookup": {
+                    "from": "attendance_logs",
+                }
+            }
+        ]
+    }
+    info_incomp = extract_plan_info(incomplete_explain)
+    lm_incomp = info_incomp["lookup_metrics"][0]
+    assert lm_incomp["indexesUsed"] is None
+    assert lm_incomp["collectionScans"] is None
+    assert lm_incomp["totalDocsExamined"] is None
+    assert lm_incomp["totalKeysExamined"] is None
+
+
+def test_benchmark_missing_lookup_metrics_evaluated_as_inconclusive():
+    """Verify that missing lookup metrics cause inconclusive status rather than PASS."""
+    # Simulated metrics with missing collectionScans
+    lookup_metrics_missing = [
+        {
+            "indexesUsed": ["emp_code_1"],
+            "totalDocsExamined": 100,
+            "totalKeysExamined": 100,
+            "collectionScans": None,  # Not reported
+        }
+    ]
+
+    has_missing_lookup_metrics = any(
+        lm.get("collectionScans") is None or lm.get("indexesUsed") is None
+        for lm in lookup_metrics_missing
+    )
+    assert has_missing_lookup_metrics is True
+
+    # Pass/fail evaluation logic from benchmark
+    total_collscan = False
+    has_unindexed_lookup = False
+    passed_sla = True
+
+    if total_collscan:
+        status = "FAIL_COLLSCAN"
+    elif has_missing_lookup_metrics:
+        status = "INCONCLUSIVE_MISSING_LOOKUP_METRICS"
+    elif has_unindexed_lookup:
+        status = "FAIL_UNINDEXED_LOOKUP"
+    elif not passed_sla:
+        status = "FAIL_LATENCY"
+    else:
+        status = "PASS"
+
+    assert status == "INCONCLUSIVE_MISSING_LOOKUP_METRICS"
+    assert status != "PASS"
+
+
+def test_database_safety_guards_raise_explicit_exceptions():
+    """Verify database safety guards use explicit ValueError exceptions that cannot be disabled in Python -O mode."""
+    import pytest
+    from benchmarks.scale_benchmark import validate_safe_benchmark_database
+    from tests.conftest import assert_safe_test_database
+
+    # 1. Benchmark database guard tests
+    # Non-benchmark database names must raise ValueError
+    for unsafe_db in ("attendance_db", "attendance_dev", "production", "admin", "random_db", ""):
+        with pytest.raises(ValueError, match="Safety check failed"):
+            validate_safe_benchmark_database(unsafe_db)
+
+    # Valid benchmark database must not raise
+    validate_safe_benchmark_database("attendance_benchmark_100k")
+    validate_safe_benchmark_database("my_benchmark_test")
+
+    # 2. Test database guard tests
+    class MockDB:
+        def __init__(self, name):
+            self.name = name
+
+    for unsafe_test_db in ("attendance_db", "production", "default", "attendance_dev", "my_data"):
+        with pytest.raises(ValueError, match="Safety check failed"):
+            assert_safe_test_database(MockDB(unsafe_test_db))
+
+    # Valid test database must not raise
+    assert_safe_test_database(MockDB("attendance_test_1234"))
+

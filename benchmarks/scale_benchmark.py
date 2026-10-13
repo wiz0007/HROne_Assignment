@@ -28,13 +28,30 @@ MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 RESULTS_FILE = os.path.join(os.path.dirname(__file__), "benchmark_results.json")
 
 
-def assert_safe_benchmark_database(db_name: str):
-    """Safety guard: verify we NEVER touch a non-benchmark database."""
-    name = db_name.lower()
-    assert "benchmark" in name, f"Safety check failed: database '{name}' does not contain 'benchmark'!"
-    assert name not in ("attendance_db", "attendance_dev", "production", "default", "admin", "config", "local"), (
-        f"Safety check failed: attempted to operate on protected database '{name}'!"
-    )
+def validate_safe_benchmark_database(db_name: str) -> None:
+    """Safety guard: verify we NEVER touch a non-benchmark database.
+    Uses explicit exceptions to ensure protection is NEVER bypassed in Python optimized mode (-O).
+    """
+    if not db_name or not isinstance(db_name, str):
+        raise ValueError("Safety check failed: database name must be a non-empty string!")
+    name = db_name.strip().lower()
+    if "benchmark" not in name:
+        raise ValueError(f"Safety check failed: database '{name}' does not contain 'benchmark'!")
+    protected_dbs = {
+        "attendance_db",
+        "attendance_dev",
+        "production",
+        "default",
+        "admin",
+        "config",
+        "local",
+        "test",
+    }
+    if name in protected_dbs:
+        raise ValueError(f"Safety check failed: attempted to operate on protected database '{name}'!")
+
+
+assert_safe_benchmark_database = validate_safe_benchmark_database
 
 
 def extract_plan_info(explain_doc: dict) -> dict:
@@ -99,15 +116,37 @@ def extract_plan_info(explain_doc: dict) -> dict:
 
             if "$lookup" in stg:
                 lookup_payload = stg.get("$lookup", {})
-                idx_used = stg.get("indexesUsed") or lookup_payload.get("indexesUsed") or []
+                if not isinstance(lookup_payload, dict):
+                    lookup_payload = {}
+                idx_used = (
+                    stg["indexesUsed"]
+                    if "indexesUsed" in stg
+                    else lookup_payload.get("indexesUsed")
+                )
+                total_docs = (
+                    stg["totalDocsExamined"]
+                    if "totalDocsExamined" in stg
+                    else lookup_payload.get("totalDocsExamined")
+                )
+                total_keys = (
+                    stg["totalKeysExamined"]
+                    if "totalKeysExamined" in stg
+                    else lookup_payload.get("totalKeysExamined")
+                )
+                coll_scans = (
+                    stg["collectionScans"]
+                    if "collectionScans" in stg
+                    else lookup_payload.get("collectionScans")
+                )
                 lookup_info = {
                     "indexesUsed": idx_used,
-                    "totalDocsExamined": stg.get("totalDocsExamined", lookup_payload.get("totalDocsExamined", 0)),
-                    "totalKeysExamined": stg.get("totalKeysExamined", lookup_payload.get("totalKeysExamined", 0)),
-                    "collectionScans": stg.get("collectionScans", lookup_payload.get("collectionScans", 0)),
+                    "totalDocsExamined": total_docs,
+                    "totalKeysExamined": total_keys,
+                    "collectionScans": coll_scans,
                 }
                 lookup_metrics.append(lookup_info)
-                lookup_indexes.extend(lookup_info["indexesUsed"])
+                if idx_used:
+                    lookup_indexes.extend(idx_used)
 
     def get_stages(node):
         stages = []
@@ -275,7 +314,11 @@ def run_benchmark(confirm: bool = False):
 
         seed_duration_s = time.perf_counter() - t0
         print(f"[+] Successfully seeded {total_seeded} attendance logs in {seed_duration_s:.2f}s")
-        assert db.attendance_logs.count_documents({}) == total_seeded
+        actual_seeded = db.attendance_logs.count_documents({})
+        if actual_seeded != total_seeded:
+            raise RuntimeError(
+                f"Database seed verification failed: expected {total_seeded} documents, found {actual_seeded}"
+            )
 
         # 3. Benchmark Queries
         print("\n" + "=" * 80)
@@ -455,11 +498,24 @@ def run_benchmark(confirm: bool = False):
             has_primary_ixscan = any("IXSCAN" in s or "IXSEEK" in s for s in info["plan_stages"])
             has_primary_collscan = "COLLSCAN" in info["plan_stages"]
 
-            # Verification: lookup stages must NOT perform collection scans and must utilize indexes
-            lookup_collscans = sum(lm.get("collectionScans", 0) for lm in lookup_metrics)
-            has_lookup_collscan = lookup_collscans > 0
+            # Verification: lookup stages must NOT perform collection scans and must utilize indexes.
+            # Missing required metrics (collectionScans or indexesUsed) prevents proving safety;
+            # it must produce an inconclusive or failed result rather than defaulting to PASS.
+            has_missing_lookup_metrics = any(
+                lm.get("collectionScans") is None or lm.get("indexesUsed") is None
+                for lm in lookup_metrics
+            )
+            lookup_collscans = sum(
+                lm["collectionScans"]
+                for lm in lookup_metrics
+                if lm.get("collectionScans") is not None
+            )
+            has_lookup_collscan = any(
+                lm.get("collectionScans") is not None and lm["collectionScans"] > 0
+                for lm in lookup_metrics
+            )
             has_unindexed_lookup = any(
-                lm.get("totalDocsExamined", 0) > 0 and not lm.get("indexesUsed")
+                (lm.get("totalDocsExamined") or 0) > 0 and not lm.get("indexesUsed")
                 for lm in lookup_metrics
             )
 
@@ -470,6 +526,8 @@ def run_benchmark(confirm: bool = False):
             # Strict status evaluation
             if total_collscan:
                 status = "FAIL_COLLSCAN"
+            elif has_missing_lookup_metrics:
+                status = "INCONCLUSIVE_MISSING_LOOKUP_METRICS"
             elif has_unindexed_lookup:
                 status = "FAIL_UNINDEXED_LOOKUP"
             elif not passed_sla:
@@ -488,7 +546,8 @@ def run_benchmark(confirm: bool = False):
                 "has_collscan": total_collscan,
                 "has_primary_collscan": has_primary_collscan,
                 "has_lookup_collscan": has_lookup_collscan,
-                "lookup_collscans": lookup_collscans,
+                "lookup_collscans": lookup_collscans if not has_missing_lookup_metrics else None,
+                "missing_lookup_metrics": has_missing_lookup_metrics,
                 "cursor_stats": {
                     "nReturned": cursor_matched,
                     "totalDocsExamined": docs_examined,
@@ -511,15 +570,17 @@ def run_benchmark(confirm: bool = False):
             print(f"  Examined: Docs={docs_examined}, Keys={keys_examined}")
             if lookup_metrics:
                 print(f"  Lookup Metrics: {lookup_metrics}")
-            print(f"  Status: {status} (Explain={explain_time_ms}ms, Real={real_latency_ms}ms, Threshold:<={b['sla_threshold_ms']}ms, Lookup Collscans:{lookup_collscans})")
+            scans_disp = lookup_collscans if not has_missing_lookup_metrics else "UNKNOWN/MISSING"
+            print(f"  Status: {status} (Explain={explain_time_ms}ms, Real={real_latency_ms}ms, Threshold:<={b['sla_threshold_ms']}ms, Lookup Collscans:{scans_disp})")
 
         # Summary pass/fail verification
         all_passed = all(r["status"] == "PASS" for r in query_results)
         print("\n" + "=" * 80)
-        print(f"BENCHMARK SUMMARY: {'ALL 8 QUERIES PASSED' if all_passed else 'SOME QUERIES FAILED'}")
+        print(f"BENCHMARK SUMMARY: {'ALL 8 QUERIES PASSED' if all_passed else 'SOME QUERIES FAILED / INCONCLUSIVE'}")
         print("=" * 80)
         for r in query_results:
-            print(f"  [{r['status']}] {r['name']} (Real: {r['real_latency_ms']}ms, Lookup Collscans: {r['lookup_collscans']})")
+            scans_disp = r['lookup_collscans'] if r.get('lookup_collscans') is not None else "UNKNOWN/MISSING"
+            print(f"  [{r['status']}] {r['name']} (Real: {r['real_latency_ms']}ms, Lookup Collscans: {scans_disp})")
 
         # Save structured results artifact
         benchmark_payload = {
@@ -555,7 +616,7 @@ def run_benchmark(confirm: bool = False):
 
         if not all_passed:
             failed_queries = [r["name"] for r in query_results if r["status"] != "PASS"]
-            raise RuntimeError(f"Scale benchmark failed for queries: {', '.join(failed_queries)}")
+            raise RuntimeError(f"Scale benchmark failed or inconclusive for queries: {', '.join(failed_queries)}")
 
         return benchmark_payload
 
