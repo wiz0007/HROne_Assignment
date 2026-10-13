@@ -25,3 +25,6 @@ tests/__pycache__/
 assignment_report.md
 assignment_progress.md
 
+# Release archives
+*.zip
+

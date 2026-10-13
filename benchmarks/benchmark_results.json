@@ -1,0 +1,455 @@
+{
+  "metadata": {
+    "timestamp": "2026-10-13T08:22:36.387480+00:00",
+    "environment": {
+      "python_version": "3.14.7",
+      "platform": "win32",
+      "mongodb_version": "8.3.9",
+      "target_database": "attendance_benchmark_100k"
+    },
+    "dataset": {
+      "total_employees": 1000,
+      "total_attendance_records": 102000,
+      "calendar_days": 140,
+      "departments_count": 10,
+      "seed_duration_seconds": 5.45
+    },
+    "indexes": {
+      "employees": {
+        "_id_": [
+          [
+            "_id",
+            1
+          ]
+        ],
+        "emp_code_1": [
+          [
+            "emp_code",
+            1
+          ]
+        ],
+        "department_1": [
+          [
+            "department",
+            1
+          ]
+        ],
+        "department_1_emp_code_1": [
+          [
+            "department",
+            1
+          ],
+          [
+            "emp_code",
+            1
+          ]
+        ],
+        "department_1_joined_on_1": [
+          [
+            "department",
+            1
+          ],
+          [
+            "joined_on",
+            1
+          ]
+        ],
+        "joined_on_1_department_1": [
+          [
+            "joined_on",
+            1
+          ],
+          [
+            "department",
+            1
+          ]
+        ]
+      },
+      "attendance_logs": {
+        "_id_": [
+          [
+            "_id",
+            1
+          ]
+        ],
+        "emp_code_1_date_1": [
+          [
+            "emp_code",
+            1
+          ],
+          [
+            "date",
+            1
+          ]
+        ],
+        "date_-1_emp_code_1": [
+          [
+            "date",
+            -1
+          ],
+          [
+            "emp_code",
+            1
+          ]
+        ],
+        "date_1_late_minutes_1": [
+          [
+            "date",
+            1
+          ],
+          [
+            "late_minutes",
+            1
+          ]
+        ],
+        "date_1_emp_code_1": [
+          [
+            "date",
+            1
+          ],
+          [
+            "emp_code",
+            1
+          ]
+        ]
+      }
+    },
+    "benchmark_command": "python benchmarks/scale_benchmark.py --confirm",
+    "overall_status": "PASS"
+  },
+  "queries": [
+    {
+      "alias": "attendance_list",
+      "name": "attendance_list (selective by emp_code + range)",
+      "target_collection": "attendance_logs",
+      "stages": "LIMIT -> FETCH -> IXSCAN",
+      "pipeline_stages": [],
+      "indexes_used": [
+        "emp_code_1_date_1"
+      ],
+      "has_ixscan": true,
+      "has_collscan": false,
+      "has_primary_collscan": false,
+      "has_lookup_collscan": false,
+      "lookup_collscans": 0,
+      "missing_lookup_metrics": false,
+      "cursor_stats": {
+        "nReturned": 20,
+        "totalDocsExamined": 20,
+        "totalKeysExamined": 20,
+        "executionTimeMillis": 2
+      },
+      "lookup_metrics": [],
+      "final_result_count": 20,
+      "explain_latency_ms": 2,
+      "real_latency_ms": 5.23,
+      "sla_threshold_ms": 50,
+      "status": "PASS"
+    },
+    {
+      "alias": "attendance_list",
+      "name": "attendance_list (date-range across all employees, page 1)",
+      "target_collection": "attendance_logs",
+      "stages": "LIMIT -> FETCH -> IXSCAN",
+      "pipeline_stages": [],
+      "indexes_used": [
+        "date_-1_emp_code_1"
+      ],
+      "has_ixscan": true,
+      "has_collscan": false,
+      "has_primary_collscan": false,
+      "has_lookup_collscan": false,
+      "lookup_collscans": 0,
+      "missing_lookup_metrics": false,
+      "cursor_stats": {
+        "nReturned": 20,
+        "totalDocsExamined": 20,
+        "totalKeysExamined": 20,
+        "executionTimeMillis": 1
+      },
+      "lookup_metrics": [],
+      "final_result_count": 20,
+      "explain_latency_ms": 1,
+      "real_latency_ms": 3.32,
+      "sla_threshold_ms": 50,
+      "status": "PASS"
+    },
+    {
+      "alias": "employee_monthly",
+      "name": "employee_monthly (single employee aggregation)",
+      "target_collection": "attendance_logs",
+      "stages": "GROUP -> PROJECTION_DEFAULT -> FETCH -> IXSCAN",
+      "pipeline_stages": [],
+      "indexes_used": [
+        "emp_code_1_date_1"
+      ],
+      "has_ixscan": true,
+      "has_collscan": false,
+      "has_primary_collscan": false,
+      "has_lookup_collscan": false,
+      "lookup_collscans": 0,
+      "missing_lookup_metrics": false,
+      "cursor_stats": {
+        "nReturned": 1,
+        "totalDocsExamined": 23,
+        "totalKeysExamined": 23,
+        "executionTimeMillis": 8
+      },
+      "lookup_metrics": [],
+      "final_result_count": 1,
+      "explain_latency_ms": 8,
+      "real_latency_ms": 7.14,
+      "sla_threshold_ms": 50,
+      "status": "PASS"
+    },
+    {
+      "alias": "department_summary",
+      "name": "department_summary (department-scoped: Engineering)",
+      "target_collection": "employees",
+      "stages": "PROJECTION_SIMPLE -> FETCH -> IXSCAN",
+      "pipeline_stages": [
+        "$cursor",
+        "$lookup",
+        "$project",
+        "$project",
+        "$group",
+        "$sort"
+      ],
+      "indexes_used": [
+        "department_1_joined_on_1",
+        "emp_code_1_date_1"
+      ],
+      "has_ixscan": true,
+      "has_collscan": false,
+      "has_primary_collscan": false,
+      "has_lookup_collscan": false,
+      "lookup_collscans": 0,
+      "missing_lookup_metrics": false,
+      "cursor_stats": {
+        "nReturned": 100,
+        "totalDocsExamined": 100,
+        "totalKeysExamined": 100,
+        "executionTimeMillis": 158
+      },
+      "lookup_metrics": [
+        {
+          "indexesUsed": [
+            "emp_code_1_date_1"
+          ],
+          "totalDocsExamined": 2250,
+          "totalKeysExamined": 2250,
+          "collectionScans": 0
+        }
+      ],
+      "final_result_count": 1,
+      "explain_latency_ms": 158,
+      "real_latency_ms": 164.44,
+      "sla_threshold_ms": 500,
+      "status": "PASS"
+    },
+    {
+      "alias": "department_summary",
+      "name": "department_summary (company-wide: all 10 departments)",
+      "target_collection": "employees",
+      "stages": "PROJECTION_SIMPLE -> FETCH -> IXSCAN",
+      "pipeline_stages": [
+        "$cursor",
+        "$lookup",
+        "$project",
+        "$project",
+        "$group",
+        "$sort"
+      ],
+      "indexes_used": [
+        "emp_code_1_date_1",
+        "joined_on_1_department_1"
+      ],
+      "has_ixscan": true,
+      "has_collscan": false,
+      "has_primary_collscan": false,
+      "has_lookup_collscan": false,
+      "lookup_collscans": 0,
+      "missing_lookup_metrics": false,
+      "cursor_stats": {
+        "nReturned": 1000,
+        "totalDocsExamined": 1000,
+        "totalKeysExamined": 1000,
+        "executionTimeMillis": 1973
+      },
+      "lookup_metrics": [
+        {
+          "indexesUsed": [
+            "emp_code_1_date_1"
+          ],
+          "totalDocsExamined": 22450,
+          "totalKeysExamined": 22450,
+          "collectionScans": 0
+        }
+      ],
+      "final_result_count": 10,
+      "explain_latency_ms": 1973,
+      "real_latency_ms": 1606.93,
+      "sla_threshold_ms": 3000,
+      "status": "PASS"
+    },
+    {
+      "alias": "late_leaderboard",
+      "name": "late_leaderboard (company-wide, limit=10)",
+      "target_collection": "attendance_logs",
+      "stages": "PROJECTION_SIMPLE -> FETCH -> IXSCAN",
+      "pipeline_stages": [
+        "$cursor",
+        "$lookup",
+        "$match",
+        "$group",
+        "$match",
+        "$sort",
+        "$_internalSetWindowFields",
+        "$match",
+        "$sort",
+        "$project"
+      ],
+      "indexes_used": [
+        "date_1_late_minutes_1",
+        "emp_code_1"
+      ],
+      "has_ixscan": true,
+      "has_collscan": false,
+      "has_primary_collscan": false,
+      "has_lookup_collscan": false,
+      "lookup_collscans": 0,
+      "missing_lookup_metrics": false,
+      "cursor_stats": {
+        "nReturned": 2656,
+        "totalDocsExamined": 2656,
+        "totalKeysExamined": 2687,
+        "executionTimeMillis": 548
+      },
+      "lookup_metrics": [
+        {
+          "indexesUsed": [
+            "emp_code_1"
+          ],
+          "totalDocsExamined": 2657,
+          "totalKeysExamined": 2657,
+          "collectionScans": 0
+        }
+      ],
+      "final_result_count": 80,
+      "explain_latency_ms": 548,
+      "real_latency_ms": 516.01,
+      "sla_threshold_ms": 1000,
+      "status": "PASS"
+    },
+    {
+      "alias": "late_leaderboard",
+      "name": "late_leaderboard (department-scoped: Engineering, limit=10)",
+      "target_collection": "attendance_logs",
+      "stages": "PROJECTION_SIMPLE -> FETCH -> IXSCAN",
+      "pipeline_stages": [
+        "$cursor",
+        "$lookup",
+        "$match",
+        "$group",
+        "$match",
+        "$sort",
+        "$_internalSetWindowFields",
+        "$match",
+        "$sort",
+        "$project"
+      ],
+      "indexes_used": [
+        "date_1_late_minutes_1",
+        "emp_code_1"
+      ],
+      "has_ixscan": true,
+      "has_collscan": false,
+      "has_primary_collscan": false,
+      "has_lookup_collscan": false,
+      "lookup_collscans": 0,
+      "missing_lookup_metrics": false,
+      "cursor_stats": {
+        "nReturned": 2656,
+        "totalDocsExamined": 2656,
+        "totalKeysExamined": 2687,
+        "executionTimeMillis": 484
+      },
+      "lookup_metrics": [
+        {
+          "indexesUsed": [
+            "emp_code_1"
+          ],
+          "totalDocsExamined": 2657,
+          "totalKeysExamined": 2657,
+          "collectionScans": 0
+        }
+      ],
+      "final_result_count": 10,
+      "explain_latency_ms": 484,
+      "real_latency_ms": 507.72,
+      "sla_threshold_ms": 1000,
+      "status": "PASS"
+    },
+    {
+      "alias": "department_trend",
+      "name": "department_trend (30-day window: Engineering)",
+      "target_collection": "employees",
+      "stages": "EXPRESS_IXSCAN",
+      "pipeline_stages": [
+        "$cursor",
+        "$project",
+        "$unwind",
+        "$project",
+        "$addFields",
+        "$addFields",
+        "$lookup",
+        "$addFields",
+        "$lookup",
+        "$addFields",
+        "$addFields",
+        "$sort",
+        "$_internalSetWindowFields"
+      ],
+      "indexes_used": [
+        "date_-1_emp_code_1",
+        "department_1",
+        "department_1_joined_on_1"
+      ],
+      "has_ixscan": true,
+      "has_collscan": false,
+      "has_primary_collscan": false,
+      "has_lookup_collscan": false,
+      "lookup_collscans": 0,
+      "missing_lookup_metrics": false,
+      "cursor_stats": {
+        "nReturned": 1,
+        "totalDocsExamined": 1,
+        "totalKeysExamined": 1,
+        "executionTimeMillis": 174
+      },
+      "lookup_metrics": [
+        {
+          "indexesUsed": [
+            "department_1_joined_on_1"
+          ],
+          "totalDocsExamined": 3000,
+          "totalKeysExamined": 3000,
+          "collectionScans": 0
+        },
+        {
+          "indexesUsed": [
+            "date_-1_emp_code_1"
+          ],
+          "totalDocsExamined": 2150,
+          "totalKeysExamined": 4655,
+          "collectionScans": 0
+        }
+      ],
+      "final_result_count": 30,
+      "explain_latency_ms": 174,
+      "real_latency_ms": 157.97,
+      "sla_threshold_ms": 500,
+      "status": "PASS"
+    }
+  ]
+}

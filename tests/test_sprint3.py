@@ -12,10 +12,11 @@ from app.main import (
 )
 
 
-
 # --------------------------------------------------------------------------- #
 # Unit Tests: Helpers, Calendar & Rounding
 # --------------------------------------------------------------------------- #
+
+
 def test_month_validation_unit():
     # Valid month
     y, m, start, end = validate_month_string("2026-07")
