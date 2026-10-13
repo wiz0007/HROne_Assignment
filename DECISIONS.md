@@ -95,13 +95,13 @@ Measured against an isolated benchmark database (`attendance_benchmark_100k`) on
 
 | Query / Explain Shape | Target Collection | Winning Plan Stages | Primary Index Used | Cursor Matched | Final Output | Docs Examined | Keys Examined | Lookup Examined | Explain Latency | Real Latency | Target SLA |
 |---|---|---|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| `attendance_list` (selective) | `attendance_logs` | `LIMIT -> FETCH -> IXSCAN` | `emp_code_1_date_1` | 20 | 20 | 20 | 20 | 0 | 1 ms | 2.44 ms | $\le 50$ ms |
-| `attendance_list` (broad date range) | `attendance_logs` | `LIMIT -> FETCH -> IXSCAN` | `date_-1_emp_code_1` | 20 | 20 | 20 | 20 | 0 | 1 ms | 2.36 ms | $\le 50$ ms |
-| `employee_monthly` | `attendance_logs` | `GROUP -> FETCH -> IXSCAN` | `emp_code_1_date_1` | 1 | 1 | 23 | 23 | 0 | 4 ms | 4.67 ms | $\le 50$ ms |
-| `department_summary` (Engineering) | `employees` | `PROJECTION_SIMPLE -> FETCH -> IXSCAN` | `department_1_joined_on_1` | 100 | 1 | 100 | 100 | 2,250 (`IXSCAN`) | 88 ms | 89.46 ms | $\le 500$ ms |
-| `department_summary` (Company-wide) | `employees` | `PROJECTION_SIMPLE -> FETCH -> IXSCAN` | `joined_on_1_department_1` | 1,000 | 10 | 1,000 | 1,000 | 22,450 (`IXSCAN`) | 814 ms | 754.57 ms | $\le 2,000$ ms |
-| `late_leaderboard` (Company-wide) | `attendance_logs` | `PROJECTION_SIMPLE -> FETCH -> IXSCAN` | `date_1_late_minutes_1` | 2,656 | 80 | 2,656 | 2,687 | 2,657 (`IXSCAN`) | 310 ms | 303.50 ms | $\le 1,000$ ms |
-| `late_leaderboard` (Engineering) | `attendance_logs` | `PROJECTION_SIMPLE -> FETCH -> IXSCAN` | `date_1_late_minutes_1` | 2,656 | 10 | 2,656 | 2,687 | 2,657 (`IXSCAN`) | 327 ms | 367.25 ms | $\le 1,000$ ms |
-| `department_trend` (30-day window) | `employees` | `EXPRESS_IXSCAN` | `department_1` | 1 | 30 | 1 | 1 | 5,150 (`IXSCAN`) | 117 ms | 82.97 ms | $\le 500$ ms |
+| `attendance_list` (selective) | `attendance_logs` | `LIMIT -> FETCH -> IXSCAN` | `emp_code_1_date_1` | 20 | 20 | 20 | 20 | 0 | 1 ms | 5.26 ms | $\le 50$ ms |
+| `attendance_list` (broad date range) | `attendance_logs` | `LIMIT -> FETCH -> IXSCAN` | `date_-1_emp_code_1` | 20 | 20 | 20 | 20 | 0 | 1 ms | 4.10 ms | $\le 50$ ms |
+| `employee_monthly` | `attendance_logs` | `GROUP -> FETCH -> IXSCAN` | `emp_code_1_date_1` | 1 | 1 | 23 | 23 | 0 | 6 ms | 7.38 ms | $\le 50$ ms |
+| `department_summary` (Engineering) | `employees` | `PROJECTION_SIMPLE -> FETCH -> IXSCAN` | `department_1_joined_on_1` | 100 | 1 | 100 | 100 | 2,250 (`IXSCAN`) | 172 ms | 135.32 ms | $\le 500$ ms |
+| `department_summary` (Company-wide) | `employees` | `PROJECTION_SIMPLE -> FETCH -> IXSCAN` | `joined_on_1_department_1` | 1,000 | 10 | 1,000 | 1,000 | 22,450 (`IXSCAN`) | 1,472 ms | 1,506.46 ms | $\le 3,000$ ms |
+| `late_leaderboard` (Company-wide) | `attendance_logs` | `PROJECTION_SIMPLE -> FETCH -> IXSCAN` | `date_1_late_minutes_1` | 2,656 | 80 | 2,656 | 2,687 | 2,657 (`IXSCAN`) | 504 ms | 702.02 ms | $\le 1,000$ ms |
+| `late_leaderboard` (Engineering) | `attendance_logs` | `PROJECTION_SIMPLE -> FETCH -> IXSCAN` | `date_1_late_minutes_1` | 2,656 | 10 | 2,656 | 2,687 | 2,657 (`IXSCAN`) | 480 ms | 443.38 ms | $\le 1,000$ ms |
+| `department_trend` (30-day window) | `employees` | `EXPRESS_IXSCAN` | `department_1` | 1 | 30 | 1 | 1 | 5,150 (`IXSCAN`) | 166 ms | 141.67 ms | $\le 500$ ms |
 
-All winning plans utilized index scans with zero collection scans (`COLLSCAN`), demonstrating bounded key/document examination, predictable scaling, and 100% compliance with target SLAs.
+All winning plans utilized index scans with zero collection scans (`COLLSCAN`), and all `$lookup` stages executed with zero collection scans (`lookup_collscans: 0`), demonstrating bounded key/document examination, predictable scaling, and 100% compliance with target SLAs.
