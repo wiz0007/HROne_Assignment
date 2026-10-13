@@ -75,11 +75,14 @@ Interactive API documentation (Swagger UI) is accessible at:
 All tests run against an isolated, disposable test database (`attendance_test_<uuid>`) and will automatically clean up after execution:
 
 ```bash
-# Run complete test suite with verbose output
+# Run complete test suite with verbose output (127 tests)
 python -m pytest -v
 
 # Byte-compile check
-python -m compileall -q app tests
+python -m compileall -q app tests benchmarks
+
+# Run Sprint 4 scale & performance benchmark (~100k records)
+python benchmarks/scale_benchmark.py --confirm
 ```
 
 ---
@@ -101,6 +104,13 @@ python -m compileall -q app tests
   - Department summary (`GET /analytics/departments/summary`) with cross-collection totals, record-weighted average work hours, and zero-log headcount accounting.
   - Late-comers leaderboard (`GET /analytics/leaderboard/late`) with competition ranking (`$rank`), tie preservation at cutoff limits, and department isolation.
   - Daily department attendance trend (`GET /analytics/departments/{department}/trend`) featuring dense MongoDB-generated calendar series, point-in-time headcounts, and a 7-day trailing moving average window.
-- **Sprint 4 & Later (Planned)**:
-  - Admin query explain endpoint (`GET /admin/explain/{endpoint}`)
-  - Performance benchmarking on 100k+ records
+- **Sprint 4 (Complete)**:
+  - Admin query explain endpoint (`GET /admin/explain/{endpoint}`) with executionStats for all 5 canonical aliases (`attendance_list`, `employee_monthly`, `department_summary`, `late_leaderboard`, `department_trend`).
+  - Shared query and aggregation pipeline builders reused verbatim between runtime and explain endpoints.
+  - Sanitized database error handling (zero disclosure of internal database exceptions or connection strings).
+  - Compound query and unique indexes with startup fail-fast guarantee.
+  - Plan inspection verifying index scans (`IXSCAN`) and zero collection scans (`COLLSCAN`) across 102,000 records.
+  - Reproducible scale benchmark in `benchmarks/scale_benchmark.py` and saved artifact in `benchmarks/benchmark_results.json`.
+  - Complete architectural decision records in `DECISIONS.md` and traceability matrix in `SPRINT4_VERIFICATION.md`.
+- **Sprint 5 (Planned)**:
+  - Final packaging, release artifact inspection, and submission audit against rubric.

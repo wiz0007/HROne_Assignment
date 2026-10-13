@@ -11,12 +11,24 @@ from fastapi.testclient import TestClient
 
 
 def assert_safe_test_database(db_instance):
-    """Safety guard: Ensure we NEVER touch a non-test database."""
-    name = db_instance.name.lower()
-    assert "test" in name, f"Safety check failed: database '{name}' does not contain 'test'!"
-    assert name not in ("attendance_db", "attendance_dev", "production", "default"), (
-        f"Safety check failed: attempted to operate on protected database '{name}'!"
-    )
+    """Safety guard: Ensure we NEVER touch a non-test database.
+    Uses explicit exceptions to ensure protection is NEVER bypassed in Python optimized mode (-O).
+    """
+    name = (getattr(db_instance, "name", "") or "").lower()
+    if "test" not in name:
+        raise ValueError(f"Safety check failed: database '{name}' does not contain 'test'!")
+    protected_dbs = {
+        "attendance_db",
+        "attendance_dev",
+        "attendance_prod",
+        "production",
+        "default",
+        "admin",
+        "config",
+        "local",
+    }
+    if name in protected_dbs:
+        raise ValueError(f"Safety check failed: attempted to operate on protected database '{name}'!")
 
 
 @pytest.fixture(scope="session")

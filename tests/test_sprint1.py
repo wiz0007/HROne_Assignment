@@ -100,7 +100,6 @@ def test_finding2_simulate_index_failure_aborts_startup():
         assert "Critical error initializing MongoDB indexes" in str(exc_info.value)
 
 
-
 def test_finding3_test_isolation_guard(test_db):
     """Finding 3: Ensure test runs in dedicated isolated database."""
     name = test_db.name.lower()
@@ -688,10 +687,10 @@ def test_health_endpoint_auth_failure_returns_503(client_app):
         assert res.status_code == 503
 
 
-
 # =========================================================================== #
 # Phase 2: Category J - Database Performance & Index Query Plan
 # =========================================================================== #
+
 
 def test_attendance_listing_uses_index_scan(test_db):
     """
