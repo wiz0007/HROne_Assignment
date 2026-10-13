@@ -832,7 +832,7 @@ def build_employee_monthly_pipeline(
     month: str,
     effective_start: Optional[str] = None,
 ) -> tuple[str, list[dict]]:
-    year, month_num, month_start, month_end = validate_month_string(month)
+    _, _, month_start, month_end = validate_month_string(month)
     start_str = effective_start or month_start
     pipeline = [
         {
@@ -963,7 +963,7 @@ def build_department_summary_pipeline(
     month: str,
     department: Optional[str] = None,
 ) -> tuple[str, list[dict]]:
-    year, month_num, month_start, month_end = validate_month_string(month)
+    _, _, month_start, month_end = validate_month_string(month)
 
     match_stage = {"joined_on": {"$lte": month_end}}
     if department is not None:
@@ -1138,7 +1138,7 @@ def build_late_leaderboard_pipeline(
     limit: int = 10,
     department: Optional[str] = None,
 ) -> tuple[str, list[dict]]:
-    year, month_num, month_start, month_end = validate_month_string(month)
+    _, _, month_start, month_end = validate_month_string(month)
 
     pipeline = [
         {

@@ -91,8 +91,8 @@ def extract_plan_info(explain_doc: dict) -> dict:
     # Case C: Aggregation pipeline stages
     if "stages" in explain_doc:
         for stg in explain_doc["stages"]:
-            stage_keys = [k for k in stg.keys() if k.startswith("$")]
-            stage_name = stage_keys[0] if stage_keys else list(stg.keys())[0]
+            stage_keys = [k for k in stg if k.startswith("$")]
+            stage_name = stage_keys[0] if stage_keys else next(iter(stg.keys()))
             pipeline_stages.append(stage_name)
             if "nReturned" in stg:
                 pipeline_returned = stg["nReturned"]
@@ -151,7 +151,7 @@ def extract_plan_info(explain_doc: dict) -> dict:
     def get_stages(node):
         stages = []
         if isinstance(node, dict):
-            if "stage" in node and node["stage"]:
+            if node.get("stage"):
                 stages.append(str(node["stage"]).upper())
             for k in ("inputStage", "outerStage", "innerStage"):
                 if k in node:
@@ -164,7 +164,7 @@ def extract_plan_info(explain_doc: dict) -> dict:
     def get_indexes(node):
         idx = []
         if isinstance(node, dict):
-            if "indexName" in node and node["indexName"]:
+            if node.get("indexName"):
                 idx.append(node["indexName"])
             for k in ("inputStage", "outerStage", "innerStage"):
                 if k in node:
@@ -175,7 +175,7 @@ def extract_plan_info(explain_doc: dict) -> dict:
         return idx
 
     plan_stages = get_stages(winning_plan)
-    indexes_used = sorted(list(set(get_indexes(winning_plan) + lookup_indexes)))
+    indexes_used = sorted(set(get_indexes(winning_plan) + lookup_indexes))
 
     return {
         "winning_plan": winning_plan,
