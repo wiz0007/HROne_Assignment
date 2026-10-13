@@ -641,6 +641,8 @@ def test_explain_uses_ixscan_with_plan_traversal(client_app, test_db):
     assert "COLLSCAN" not in info3["plan_stages"]
     assert any("department" in idx for idx in info3["indexes_used"])
     assert info3["exec_stats"]["totalDocsExamined"] <= 10
+    # Lookup stage scan verification: zero collection scans during joins
+    assert all(lm.get("collectionScans", 0) == 0 for lm in info3["lookup_metrics"])
 
     # 4. late_leaderboard: match on date and late_minutes must use IXSCAN on date_1_late_minutes_1
     res4 = client_app.get("/admin/explain/late_leaderboard?month=2026-03&department=Engineering")
@@ -649,6 +651,7 @@ def test_explain_uses_ixscan_with_plan_traversal(client_app, test_db):
     assert any("IXSCAN" in s or "IXSEEK" in s for s in info4["plan_stages"])
     assert "COLLSCAN" not in info4["plan_stages"]
     assert "date_1_late_minutes_1" in info4["indexes_used"]
+    assert all(lm.get("collectionScans", 0) == 0 for lm in info4["lookup_metrics"])
 
     # 5. department_trend: initial match on department must use indexed scan on department
     res5 = client_app.get("/admin/explain/department_trend?department=Engineering&from=2026-03-01&to=2026-03-07")
@@ -657,6 +660,7 @@ def test_explain_uses_ixscan_with_plan_traversal(client_app, test_db):
     assert any("IXSCAN" in s or "IXSEEK" in s for s in info5["plan_stages"])
     assert "COLLSCAN" not in info5["plan_stages"]
     assert any("department" in idx for idx in info5["indexes_used"])
+    assert all(lm.get("collectionScans", 0) == 0 for lm in info5["lookup_metrics"])
 
 
 def test_explain_database_error_handling(client_app, monkeypatch):
