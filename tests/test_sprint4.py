@@ -367,12 +367,17 @@ def extract_plan_info(explain_doc: dict) -> dict:
     """
     Traverses explain output across find queries and aggregation pipelines,
     identifying the winning plan, extracting its stage hierarchy, isolating
-    rejected candidate plans, and recording executionStats.
+    rejected candidate plans, and recording executionStats, cursor-level metrics,
+    and lookup stage statistics.
     """
     winning_plan = {}
     rejected_plans = []
     exec_stats = {}
+    cursor_stats = {}
+    lookup_metrics = []
     lookup_indexes = []
+    pipeline_stages = []
+    pipeline_returned = None
 
     # Case A: Top-level queryPlanner (find queries or SBE aggregations)
     if "queryPlanner" in explain_doc:
@@ -390,10 +395,17 @@ def extract_plan_info(explain_doc: dict) -> dict:
             "totalDocsExamined": es.get("totalDocsExamined", 0),
             "executionTimeMillis": es.get("executionTimeMillis", 0),
         }
+        pipeline_returned = exec_stats["nReturned"]
 
     # Case C: Aggregation pipeline stages
     if "stages" in explain_doc:
         for stg in explain_doc["stages"]:
+            stage_keys = [k for k in stg.keys() if k.startswith("$")]
+            stage_name = stage_keys[0] if stage_keys else list(stg.keys())[0]
+            pipeline_stages.append(stage_name)
+            if "nReturned" in stg:
+                pipeline_returned = stg["nReturned"]
+
             if "$cursor" in stg:
                 c = stg["$cursor"]
                 if not winning_plan and "queryPlanner" in c:
@@ -401,16 +413,27 @@ def extract_plan_info(explain_doc: dict) -> dict:
                     wp = qp.get("winningPlan", {})
                     winning_plan = wp.get("queryPlan", wp)
                     rejected_plans = qp.get("rejectedPlans", [])
-                if not exec_stats and "executionStats" in c:
-                    es = c["executionStats"]
-                    exec_stats = {
-                        "nReturned": es.get("nReturned", 0),
-                        "totalKeysExamined": es.get("totalKeysExamined", 0),
-                        "totalDocsExamined": es.get("totalDocsExamined", 0),
-                        "executionTimeMillis": es.get("executionTimeMillis", 0),
-                    }
-            if "$lookup" in stg and "indexesUsed" in stg["$lookup"]:
-                lookup_indexes.extend(stg["$lookup"]["indexesUsed"])
+                c_es = c.get("executionStats", {})
+                cursor_stats = {
+                    "nReturned": c_es.get("nReturned", stg.get("nReturned", 0)),
+                    "totalKeysExamined": c_es.get("totalKeysExamined", 0),
+                    "totalDocsExamined": c_es.get("totalDocsExamined", 0),
+                    "executionTimeMillis": c_es.get("executionTimeMillis", stg.get("executionTimeMillisEstimate", 0)),
+                }
+                if not exec_stats:
+                    exec_stats = dict(cursor_stats)
+
+            if "$lookup" in stg:
+                lookup_payload = stg.get("$lookup", {})
+                idx_used = stg.get("indexesUsed") or lookup_payload.get("indexesUsed") or []
+                lookup_info = {
+                    "indexesUsed": idx_used,
+                    "totalDocsExamined": stg.get("totalDocsExamined", lookup_payload.get("totalDocsExamined", 0)),
+                    "totalKeysExamined": stg.get("totalKeysExamined", lookup_payload.get("totalKeysExamined", 0)),
+                    "collectionScans": stg.get("collectionScans", lookup_payload.get("collectionScans", 0)),
+                }
+                lookup_metrics.append(lookup_info)
+                lookup_indexes.extend(lookup_info["indexesUsed"])
 
     def get_stages(node):
         stages = []
@@ -439,14 +462,18 @@ def extract_plan_info(explain_doc: dict) -> dict:
         return idx
 
     plan_stages = get_stages(winning_plan)
-    indexes_used = list(set(get_indexes(winning_plan) + lookup_indexes))
+    indexes_used = sorted(list(set(get_indexes(winning_plan) + lookup_indexes)))
 
     return {
         "winning_plan": winning_plan,
         "rejected_plans": rejected_plans,
         "plan_stages": plan_stages,
+        "pipeline_stages": pipeline_stages,
         "indexes_used": indexes_used,
         "exec_stats": exec_stats,
+        "cursor_stats": cursor_stats,
+        "lookup_metrics": lookup_metrics,
+        "pipeline_returned": pipeline_returned,
     }
 
 
@@ -545,6 +572,10 @@ def test_extract_plan_info_aggregation_stages_and_lookup():
     assert "department_1_joined_on_1" in info["indexes_used"]
     assert "emp_code_1_date_1" in info["indexes_used"]
     assert info["exec_stats"]["nReturned"] == 3
+    assert info["cursor_stats"]["nReturned"] == 3
+    assert info["cursor_stats"]["totalDocsExamined"] == 3
+    assert len(info["lookup_metrics"]) == 1
+    assert info["lookup_metrics"][0]["indexesUsed"] == ["emp_code_1_date_1"]
 
 
 # --------------------------------------------------------------------------- #
@@ -630,10 +661,14 @@ def test_explain_uses_ixscan_with_plan_traversal(client_app, test_db):
 
 def test_explain_database_error_handling(client_app, monkeypatch):
     from app.main import db
+    simulated_error_msg = "Simulated database timeout or connection string leak mongodb://secret:pass@cluster"
     def mock_command_fail(*args, **kwargs):
-        raise RuntimeError("Simulated database timeout or connectivity failure")
+        raise RuntimeError(simulated_error_msg)
 
     monkeypatch.setattr(db, "command", mock_command_fail)
     res = client_app.get("/admin/explain/attendance_list")
     assert res.status_code == 500
-    assert "Database explain command failed" in res.json()["detail"]
+    assert res.json()["detail"] == "Database explain command failed"
+    # Ensure internal exception details and sensitive strings are NOT leaked in response
+    assert simulated_error_msg not in res.text
+    assert "secret:pass" not in res.text

@@ -5,6 +5,7 @@ Run:  uvicorn app.main:app --port 8000
 Env:  MONGO_URI, MONGO_DB (loaded from environment / local .env)
 """
 import calendar
+import logging
 import os
 import re
 from contextlib import asynccontextmanager
@@ -27,6 +28,7 @@ MONGO_DB = os.getenv("MONGO_DB", "attendance_db")
 
 client = MongoClient(MONGO_URI)
 db = client[MONGO_DB]
+logger = logging.getLogger(__name__)
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -1551,7 +1553,8 @@ def explain_endpoint(
     try:
         explain_doc = db.command(command)
     except Exception as exc:
-        raise HTTPException(500, f"Database explain command failed: {exc}") from exc
+        logger.error("Database explain command failed: %s", exc)
+        raise HTTPException(500, "Database explain command failed") from exc
 
     return {
         "endpoint": endpoint.value,
