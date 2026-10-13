@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "timestamp": "2026-10-13T06:52:55.645766+00:00",
+    "timestamp": "2026-10-13T07:34:34.915651+00:00",
     "environment": {
       "python_version": "3.14.7",
       "platform": "win32",
@@ -12,7 +12,7 @@
       "total_attendance_records": 102000,
       "calendar_days": 140,
       "departments_count": 10,
-      "seed_duration_seconds": 5.19
+      "seed_duration_seconds": 3.41
     },
     "indexes": {
       "employees": {
@@ -132,6 +132,7 @@
       "has_primary_collscan": false,
       "has_lookup_collscan": false,
       "lookup_collscans": 0,
+      "missing_lookup_metrics": false,
       "cursor_stats": {
         "nReturned": 20,
         "totalDocsExamined": 20,
@@ -141,7 +142,7 @@
       "lookup_metrics": [],
       "final_result_count": 20,
       "explain_latency_ms": 1,
-      "real_latency_ms": 5.26,
+      "real_latency_ms": 2.43,
       "sla_threshold_ms": 50,
       "status": "PASS"
     },
@@ -159,6 +160,7 @@
       "has_primary_collscan": false,
       "has_lookup_collscan": false,
       "lookup_collscans": 0,
+      "missing_lookup_metrics": false,
       "cursor_stats": {
         "nReturned": 20,
         "totalDocsExamined": 20,
@@ -168,7 +170,7 @@
       "lookup_metrics": [],
       "final_result_count": 20,
       "explain_latency_ms": 1,
-      "real_latency_ms": 4.1,
+      "real_latency_ms": 2.11,
       "sla_threshold_ms": 50,
       "status": "PASS"
     },
@@ -186,16 +188,17 @@
       "has_primary_collscan": false,
       "has_lookup_collscan": false,
       "lookup_collscans": 0,
+      "missing_lookup_metrics": false,
       "cursor_stats": {
         "nReturned": 1,
         "totalDocsExamined": 23,
         "totalKeysExamined": 23,
-        "executionTimeMillis": 6
+        "executionTimeMillis": 3
       },
       "lookup_metrics": [],
       "final_result_count": 1,
-      "explain_latency_ms": 6,
-      "real_latency_ms": 7.38,
+      "explain_latency_ms": 3,
+      "real_latency_ms": 6.42,
       "sla_threshold_ms": 50,
       "status": "PASS"
     },
@@ -221,11 +224,12 @@
       "has_primary_collscan": false,
       "has_lookup_collscan": false,
       "lookup_collscans": 0,
+      "missing_lookup_metrics": false,
       "cursor_stats": {
         "nReturned": 100,
         "totalDocsExamined": 100,
         "totalKeysExamined": 100,
-        "executionTimeMillis": 172
+        "executionTimeMillis": 90
       },
       "lookup_metrics": [
         {
@@ -238,8 +242,8 @@
         }
       ],
       "final_result_count": 1,
-      "explain_latency_ms": 172,
-      "real_latency_ms": 135.32,
+      "explain_latency_ms": 90,
+      "real_latency_ms": 91.59,
       "sla_threshold_ms": 500,
       "status": "PASS"
     },
@@ -265,11 +269,12 @@
       "has_primary_collscan": false,
       "has_lookup_collscan": false,
       "lookup_collscans": 0,
+      "missing_lookup_metrics": false,
       "cursor_stats": {
         "nReturned": 1000,
         "totalDocsExamined": 1000,
         "totalKeysExamined": 1000,
-        "executionTimeMillis": 1472
+        "executionTimeMillis": 872
       },
       "lookup_metrics": [
         {
@@ -282,8 +287,8 @@
         }
       ],
       "final_result_count": 10,
-      "explain_latency_ms": 1472,
-      "real_latency_ms": 1506.46,
+      "explain_latency_ms": 872,
+      "real_latency_ms": 826.81,
       "sla_threshold_ms": 3000,
       "status": "PASS"
     },
@@ -313,11 +318,12 @@
       "has_primary_collscan": false,
       "has_lookup_collscan": false,
       "lookup_collscans": 0,
+      "missing_lookup_metrics": false,
       "cursor_stats": {
         "nReturned": 2656,
         "totalDocsExamined": 2656,
         "totalKeysExamined": 2687,
-        "executionTimeMillis": 504
+        "executionTimeMillis": 325
       },
       "lookup_metrics": [
         {
@@ -330,8 +336,8 @@
         }
       ],
       "final_result_count": 80,
-      "explain_latency_ms": 504,
-      "real_latency_ms": 702.02,
+      "explain_latency_ms": 325,
+      "real_latency_ms": 310.26,
       "sla_threshold_ms": 1000,
       "status": "PASS"
     },
@@ -361,11 +367,12 @@
       "has_primary_collscan": false,
       "has_lookup_collscan": false,
       "lookup_collscans": 0,
+      "missing_lookup_metrics": false,
       "cursor_stats": {
         "nReturned": 2656,
         "totalDocsExamined": 2656,
         "totalKeysExamined": 2687,
-        "executionTimeMillis": 480
+        "executionTimeMillis": 313
       },
       "lookup_metrics": [
         {
@@ -378,8 +385,8 @@
         }
       ],
       "final_result_count": 10,
-      "explain_latency_ms": 480,
-      "real_latency_ms": 443.38,
+      "explain_latency_ms": 313,
+      "real_latency_ms": 298.58,
       "sla_threshold_ms": 1000,
       "status": "PASS"
     },
@@ -413,11 +420,12 @@
       "has_primary_collscan": false,
       "has_lookup_collscan": false,
       "lookup_collscans": 0,
+      "missing_lookup_metrics": false,
       "cursor_stats": {
         "nReturned": 1,
         "totalDocsExamined": 1,
         "totalKeysExamined": 1,
-        "executionTimeMillis": 166
+        "executionTimeMillis": 98
       },
       "lookup_metrics": [
         {
@@ -438,8 +446,8 @@
         }
       ],
       "final_result_count": 30,
-      "explain_latency_ms": 166,
-      "real_latency_ms": 141.67,
+      "explain_latency_ms": 98,
+      "real_latency_ms": 80.99,
       "sla_threshold_ms": 500,
       "status": "PASS"
     }
