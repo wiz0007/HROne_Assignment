@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "timestamp": "2026-10-13T07:34:34.915651+00:00",
+    "timestamp": "2026-10-13T08:22:36.387480+00:00",
     "environment": {
       "python_version": "3.14.7",
       "platform": "win32",
@@ -12,7 +12,7 @@
       "total_attendance_records": 102000,
       "calendar_days": 140,
       "departments_count": 10,
-      "seed_duration_seconds": 3.41
+      "seed_duration_seconds": 5.45
     },
     "indexes": {
       "employees": {
@@ -137,12 +137,12 @@
         "nReturned": 20,
         "totalDocsExamined": 20,
         "totalKeysExamined": 20,
-        "executionTimeMillis": 1
+        "executionTimeMillis": 2
       },
       "lookup_metrics": [],
       "final_result_count": 20,
-      "explain_latency_ms": 1,
-      "real_latency_ms": 2.43,
+      "explain_latency_ms": 2,
+      "real_latency_ms": 5.23,
       "sla_threshold_ms": 50,
       "status": "PASS"
     },
@@ -170,7 +170,7 @@
       "lookup_metrics": [],
       "final_result_count": 20,
       "explain_latency_ms": 1,
-      "real_latency_ms": 2.11,
+      "real_latency_ms": 3.32,
       "sla_threshold_ms": 50,
       "status": "PASS"
     },
@@ -193,12 +193,12 @@
         "nReturned": 1,
         "totalDocsExamined": 23,
         "totalKeysExamined": 23,
-        "executionTimeMillis": 3
+        "executionTimeMillis": 8
       },
       "lookup_metrics": [],
       "final_result_count": 1,
-      "explain_latency_ms": 3,
-      "real_latency_ms": 6.42,
+      "explain_latency_ms": 8,
+      "real_latency_ms": 7.14,
       "sla_threshold_ms": 50,
       "status": "PASS"
     },
@@ -229,7 +229,7 @@
         "nReturned": 100,
         "totalDocsExamined": 100,
         "totalKeysExamined": 100,
-        "executionTimeMillis": 90
+        "executionTimeMillis": 158
       },
       "lookup_metrics": [
         {
@@ -242,8 +242,8 @@
         }
       ],
       "final_result_count": 1,
-      "explain_latency_ms": 90,
-      "real_latency_ms": 91.59,
+      "explain_latency_ms": 158,
+      "real_latency_ms": 164.44,
       "sla_threshold_ms": 500,
       "status": "PASS"
     },
@@ -274,7 +274,7 @@
         "nReturned": 1000,
         "totalDocsExamined": 1000,
         "totalKeysExamined": 1000,
-        "executionTimeMillis": 872
+        "executionTimeMillis": 1973
       },
       "lookup_metrics": [
         {
@@ -287,8 +287,8 @@
         }
       ],
       "final_result_count": 10,
-      "explain_latency_ms": 872,
-      "real_latency_ms": 826.81,
+      "explain_latency_ms": 1973,
+      "real_latency_ms": 1606.93,
       "sla_threshold_ms": 3000,
       "status": "PASS"
     },
@@ -323,7 +323,7 @@
         "nReturned": 2656,
         "totalDocsExamined": 2656,
         "totalKeysExamined": 2687,
-        "executionTimeMillis": 325
+        "executionTimeMillis": 548
       },
       "lookup_metrics": [
         {
@@ -336,8 +336,8 @@
         }
       ],
       "final_result_count": 80,
-      "explain_latency_ms": 325,
-      "real_latency_ms": 310.26,
+      "explain_latency_ms": 548,
+      "real_latency_ms": 516.01,
       "sla_threshold_ms": 1000,
       "status": "PASS"
     },
@@ -372,7 +372,7 @@
         "nReturned": 2656,
         "totalDocsExamined": 2656,
         "totalKeysExamined": 2687,
-        "executionTimeMillis": 313
+        "executionTimeMillis": 484
       },
       "lookup_metrics": [
         {
@@ -385,8 +385,8 @@
         }
       ],
       "final_result_count": 10,
-      "explain_latency_ms": 313,
-      "real_latency_ms": 298.58,
+      "explain_latency_ms": 484,
+      "real_latency_ms": 507.72,
       "sla_threshold_ms": 1000,
       "status": "PASS"
     },
@@ -425,7 +425,7 @@
         "nReturned": 1,
         "totalDocsExamined": 1,
         "totalKeysExamined": 1,
-        "executionTimeMillis": 98
+        "executionTimeMillis": 174
       },
       "lookup_metrics": [
         {
@@ -446,8 +446,8 @@
         }
       ],
       "final_result_count": 30,
-      "explain_latency_ms": 98,
-      "real_latency_ms": 80.99,
+      "explain_latency_ms": 174,
+      "real_latency_ms": 157.97,
       "sla_threshold_ms": 500,
       "status": "PASS"
     }
