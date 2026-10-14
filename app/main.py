@@ -26,8 +26,54 @@ load_dotenv()
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 MONGO_DB = os.getenv("MONGO_DB", "attendance_db")
 
-client = MongoClient(MONGO_URI)
-db = client[MONGO_DB]
+
+class _LazyMongoClient:
+    """Lazy proxy for MongoClient to avoid import-time database side effects (S5-SAFE-01)."""
+
+    def __init__(self, uri_getter):
+        self._uri_getter = uri_getter
+        self._client = None
+
+    def _get_client(self):
+        if self._client is None:
+            self._client = MongoClient(self._uri_getter())
+        return self._client
+
+    def __getitem__(self, item):
+        return self._get_client()[item]
+
+    def __getattr__(self, name):
+        return getattr(self._get_client(), name)
+
+    def __repr__(self):
+        return repr(self._client) if self._client else f"<LazyMongoClient uri={self._uri_getter()}>"
+
+
+class _LazyDatabase:
+    """Lazy proxy for MongoDB database to avoid import-time database side effects (S5-SAFE-01)."""
+
+    def __init__(self, client_proxy, db_name_getter):
+        self._client_proxy = client_proxy
+        self._db_name_getter = db_name_getter
+        self._db = None
+
+    def _get_db(self):
+        if self._db is not None:
+            return self._db
+        return self._client_proxy[self._db_name_getter()]
+
+    def __getitem__(self, item):
+        return self._get_db()[item]
+
+    def __getattr__(self, name):
+        return getattr(self._get_db(), name)
+
+    def __repr__(self):
+        return repr(self._db) if self._db else f"<LazyDatabase db={self._db_name_getter()}>"
+
+
+client = _LazyMongoClient(lambda: os.getenv("MONGO_URI", "mongodb://localhost:27017"))
+db = _LazyDatabase(client, lambda: os.getenv("MONGO_DB", "attendance_db"))
 logger = logging.getLogger(__name__)
 
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -277,6 +323,10 @@ class EmployeeCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_shifts_and_joined(self):
+        if not self.name.strip():
+            raise ValueError("name cannot be empty or whitespace-only")
+        if not self.department.strip():
+            raise ValueError("department cannot be empty or whitespace-only")
         if self.shift_start == self.shift_end:
             raise ValueError("shift_start must differ from shift_end")
         try:
@@ -456,6 +506,8 @@ def list_employees(
 ):
     q = {}
     if department is not None:
+        if not department.strip():
+            raise HTTPException(422, "Department filter cannot be empty or whitespace-only")
         q["department"] = department
     total = db.employees.count_documents(q)
     skip = (page - 1) * page_size
@@ -518,6 +570,8 @@ def build_attendance_list_query(
 
     q = {}
     if emp_code is not None:
+        if not emp_code.strip():
+            raise HTTPException(422, "emp_code cannot be empty or whitespace-only")
         q["emp_code"] = emp_code
     if date_from or date_to:
         q["date"] = {}
@@ -895,7 +949,7 @@ def get_employee_monthly(
     Endpoint A: Monthly attendance summary for one employee.
     Backed by a MongoDB aggregation.
     """
-    year, month_num, month_start, month_end = validate_month_string(month)
+    year, month_num, _month_start, _month_end = validate_month_string(month)
 
     # 1. Locate employee first, returning 404 if unknown
     emp = db.employees.find_one({"emp_code": emp_code})
@@ -1111,6 +1165,8 @@ def get_department_summary(
     Endpoint B: Department summary for a month.
     One item per department, sorted by department ascending.
     """
+    if department is not None and not department.strip():
+        raise HTTPException(422, "Department filter cannot be empty or whitespace-only")
     col, pipeline = build_department_summary_pipeline(month, department)
     res = list(db[col].aggregate(pipeline))
     items = []
@@ -1215,6 +1271,8 @@ def get_late_leaderboard(
     Endpoint C: Late-comers leaderboard for a month.
     Competition ranking with cutoff ties included.
     """
+    if department is not None and not department.strip():
+        raise HTTPException(422, "Department filter cannot be empty or whitespace-only")
     col, pipeline = build_late_leaderboard_pipeline(month, limit, department)
     items = list(db[col].aggregate(pipeline))
     return {"month": month, "items": items}
@@ -1225,6 +1283,8 @@ def build_department_trend_pipeline(
     from_: str,
     to: str,
 ) -> tuple[str, list[dict]]:
+    if not department or not department.strip():
+        raise HTTPException(422, "Department cannot be empty or whitespace-only")
     validate_calendar_date(from_, "from")
     validate_calendar_date(to, "to")
 
@@ -1402,6 +1462,8 @@ def get_department_trend(
     Endpoint D: Daily attendance trend for a department.
     Generates exact chronological series from 'from' through 'to' inclusive within MongoDB.
     """
+    if not department.strip():
+        raise HTTPException(422, "Department cannot be empty or whitespace-only")
     # Return 404 if no employees belong to the specified department (even if they all joined later)
     dept_exists = db.employees.find_one({"department": department})
     if not dept_exists:
