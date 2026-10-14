@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "timestamp": "2026-10-13T19:07:16.498070+00:00",
+    "timestamp": "2026-10-14T05:47:34.977426+00:00",
     "environment": {
       "python_version": "3.14.7",
       "platform": "win32",
@@ -13,7 +13,7 @@
       "total_attendance_records": 102000,
       "calendar_days": 140,
       "departments_count": 10,
-      "seed_duration_seconds": 5.44
+      "seed_duration_seconds": 3.31
     },
     "indexes": {
       "employees": {
@@ -152,12 +152,12 @@
         "nReturned": 20,
         "totalDocsExamined": 20,
         "totalKeysExamined": 20,
-        "executionTimeMillis": 2
+        "executionTimeMillis": 1
       },
       "lookup_metrics": [],
       "final_result_count": 20,
-      "explain_latency_ms": 2,
-      "real_latency_ms": 4.26,
+      "explain_latency_ms": 1,
+      "real_latency_ms": 2.22,
       "sla_threshold_ms": 50
     },
     {
@@ -191,12 +191,12 @@
         "nReturned": 20,
         "totalDocsExamined": 20,
         "totalKeysExamined": 20,
-        "executionTimeMillis": 2
+        "executionTimeMillis": 1
       },
       "lookup_metrics": [],
       "final_result_count": 20,
-      "explain_latency_ms": 2,
-      "real_latency_ms": 3.67,
+      "explain_latency_ms": 1,
+      "real_latency_ms": 2.22,
       "sla_threshold_ms": 50
     },
     {
@@ -230,12 +230,12 @@
         "nReturned": 1,
         "totalDocsExamined": 23,
         "totalKeysExamined": 23,
-        "executionTimeMillis": 8
+        "executionTimeMillis": 3
       },
       "lookup_metrics": [],
       "final_result_count": 1,
-      "explain_latency_ms": 8,
-      "real_latency_ms": 6.86,
+      "explain_latency_ms": 3,
+      "real_latency_ms": 3.98,
       "sla_threshold_ms": 50
     },
     {
@@ -277,7 +277,7 @@
         "nReturned": 100,
         "totalDocsExamined": 100,
         "totalKeysExamined": 100,
-        "executionTimeMillis": 168
+        "executionTimeMillis": 83
       },
       "lookup_metrics": [
         {
@@ -296,8 +296,8 @@
         }
       ],
       "final_result_count": 1,
-      "explain_latency_ms": 168,
-      "real_latency_ms": 180.11,
+      "explain_latency_ms": 83,
+      "real_latency_ms": 78.01,
       "sla_threshold_ms": 500
     },
     {
@@ -339,7 +339,7 @@
         "nReturned": 1000,
         "totalDocsExamined": 1000,
         "totalKeysExamined": 1000,
-        "executionTimeMillis": 2197
+        "executionTimeMillis": 843
       },
       "lookup_metrics": [
         {
@@ -358,8 +358,8 @@
         }
       ],
       "final_result_count": 10,
-      "explain_latency_ms": 2197,
-      "real_latency_ms": 2002.92,
+      "explain_latency_ms": 843,
+      "real_latency_ms": 893.72,
       "sla_threshold_ms": 3000
     },
     {
@@ -405,7 +405,7 @@
         "nReturned": 2656,
         "totalDocsExamined": 2656,
         "totalKeysExamined": 2687,
-        "executionTimeMillis": 550
+        "executionTimeMillis": 311
       },
       "lookup_metrics": [
         {
@@ -424,8 +424,8 @@
         }
       ],
       "final_result_count": 80,
-      "explain_latency_ms": 550,
-      "real_latency_ms": 528.34,
+      "explain_latency_ms": 311,
+      "real_latency_ms": 314.1,
       "sla_threshold_ms": 1000
     },
     {
@@ -471,7 +471,7 @@
         "nReturned": 2656,
         "totalDocsExamined": 2656,
         "totalKeysExamined": 2687,
-        "executionTimeMillis": 592
+        "executionTimeMillis": 321
       },
       "lookup_metrics": [
         {
@@ -490,8 +490,8 @@
         }
       ],
       "final_result_count": 10,
-      "explain_latency_ms": 592,
-      "real_latency_ms": 529.99,
+      "explain_latency_ms": 321,
+      "real_latency_ms": 293.59,
       "sla_threshold_ms": 1000
     },
     {
@@ -541,7 +541,7 @@
         "nReturned": 1,
         "totalDocsExamined": 1,
         "totalKeysExamined": 1,
-        "executionTimeMillis": 196
+        "executionTimeMillis": 96
       },
       "lookup_metrics": [
         {
@@ -574,8 +574,8 @@
         }
       ],
       "final_result_count": 30,
-      "explain_latency_ms": 196,
-      "real_latency_ms": 154.55,
+      "explain_latency_ms": 96,
+      "real_latency_ms": 85.94,
       "sla_threshold_ms": 500
     }
   ]
