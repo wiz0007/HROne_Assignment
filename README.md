@@ -114,7 +114,7 @@ python scripts/build_release.py
   - Compound query and unique indexes with startup fail-fast guarantee.
   - Plan inspection verifying index scans (`IXSCAN`) and zero collection scans (`COLLSCAN`) across 102,000 records.
   - Reproducible scale benchmark in `benchmarks/scale_benchmark.py` and saved artifact in `benchmarks/benchmark_results.json`.
-  - Complete architectural decision records in `DECISIONS.md` and traceability matrix in `SPRINT4_VERIFICATION.md`.
+  - Complete architectural decision records in `DECISIONS.md`.
 - **Sprint 5 (Complete)**:
   - Fail-closed benchmark safety: required `--confirm` opt-in before client instantiation; exact allowlist matching (`APPROVED_BENCHMARK_DATABASES`) using explicit `ValueError` exceptions working in normal and `python -O` modes.
   - Metric completeness: distinguish missing/null/malformed metrics from observed zero (`0`); reject missing metrics as `INCONCLUSIVE_METRICS`.
@@ -122,5 +122,5 @@ python scripts/build_release.py
   - Scenario-specific index policies and recorded decision reasons per query.
   - Overall status aggregation: any non-PASS scenario makes overall status non-PASS and process exits nonzero.
   - Automated release packaging and integrity checks via `scripts/build_release.py`.
-  - 164 automated regression tests passing across all 5 sprints; comprehensive evidence in `SPRINT5_VERIFICATION.md`.
+  - 164 automated regression tests passing across all 5 sprints; comprehensive evidence recorded in `benchmarks/benchmark_results.json`.
 

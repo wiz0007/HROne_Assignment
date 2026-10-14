@@ -61,5 +61,7 @@ release_submission/
 # Local assignment reports & notes
 assignment_report.md
 assignment_progress.md
-
-
+# Internal assignment and sprint-audit artifacts not intended for public submission
+/PROBLEM_STATEMENT.docx
+/SPRINT4_VERIFICATION.md
+/SPRINT5_VERIFICATION.md
