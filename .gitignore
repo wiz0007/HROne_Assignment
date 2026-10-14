@@ -2,29 +2,64 @@
 .venv/
 venv/
 ENV/
+env/
 
-# Environment variables
+# Environment variables & local secrets
 .env
+.env.*
+.env.local
+.env.prod
+.env.dev
 
-# Python cache
+# Python caches & compiled bytecode
 __pycache__/
 *.py[cod]
 *$py.class
 *.pytest_cache/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
-# Testing
+# Testing & coverage artifacts
 .coverage
 htmlcov/
 tests/__pycache__/
 
-# IDE
+# IDE & OS metadata
 .vscode/
 .idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+*.tmp
+
+# Credentials, keys & private tokens
+*.key
+*.pem
+*.cert
+*.crt
+*.pfx
+*.p12
+*.dump
+*.sql
+*.sqlite
+*.sqlite3
+credentials.json
+secrets.json
+token.txt
+service-account*.json
+firebase-adminsdk*.json
+id_rsa*
+id_ed25519*
+
+# Local extraction & release archives
+release_submission/
+*.zip
 
 # Local assignment reports & notes
 assignment_report.md
 assignment_progress.md
 
-# Release archives
-*.zip
 
