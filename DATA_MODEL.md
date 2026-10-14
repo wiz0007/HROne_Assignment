@@ -336,3 +336,21 @@ Older records may omit these two fields entirely. Treat missing as an empty arra
   "overtime_minutes": 0
 }
 ```
+
+---
+
+## 10. Production Index Inventory & Key Ordering Strategy
+
+All required indexes are created idempotently at application startup with a fail-fast guarantee.
+
+| Collection | Index Key Pattern | Unique | Supported Query / Aggregation Shape | Key Order & ESR Rationale |
+|---|---|:---:|---|---|
+| `employees` | `[("emp_code", 1)]` | **Yes** | Single employee lookups, punch validation, `$lookup` foreign key joins. | Natural primary business identifier; equality lookup $O(1)$. |
+| `employees` | `[("department", 1)]` | No | Department filtering in `GET /employees?department=...`. | Equality lookup on department. |
+| `employees` | `[("department", 1), ("emp_code", 1)]` | No | Department employee code projections for department trend and summary. | Equality (`department`) $\rightarrow$ Sort/Project (`emp_code`). |
+| `employees` | `[("department", 1), ("joined_on", 1)]` | No | Department summary headcount bounded by `joined_on <= month_end`. | ESR Rule: Equality (`department`) $\rightarrow$ Range (`joined_on`). |
+| `employees` | `[("joined_on", 1), ("department", 1)]` | No | Company-wide department summary headcount (`joined_on <= month_end`). | Range (`joined_on`) $\rightarrow$ Group/Equality (`department`). |
+| `attendance_logs` | `[("emp_code", 1), ("date", 1)]` | **Yes** | Single record retrieval, punch-in duplicate prevention, employee monthly summary. | ESR Rule: Equality (`emp_code`) $\rightarrow$ Range (`date`). Enforces $\le 1$ log per employee per date. |
+| `attendance_logs` | `[("date", -1), ("emp_code", 1)]` | No | Paginated attendance listing (`GET /attendance`) with default ordering. | Matches sort specification `[("date", -1), ("emp_code", 1)]` to stream results without in-memory `SORT`. |
+| `attendance_logs` | `[("date", 1), ("late_minutes", 1)]` | No | Monthly late leaderboard match stage (`date` in month, `late_minutes > 0`). | ESR Rule: Range (`date`) $\rightarrow$ Range (`late_minutes`). |
+| `attendance_logs` | `[("date", 1), ("emp_code", 1)]` | No | Date-range foreign key joins against employees collection. | Range (`date`) $\rightarrow$ Equality (`emp_code`). |
