@@ -19,7 +19,7 @@
 | **S5-BENCH-03** | Scenario-specific index policies, legitimate scan declarations, latency SLAs, and result correctness invariants. | High | `benchmarks/scale_benchmark.py:240-325`, `evaluate_benchmark_scenario()`, scenario definitions | `tests/test_sprint5.py::test_s5_bench_03_*` | `pytest tests/test_sprint5.py -k bench_03 -v` | **Verified** | Company-wide scan permitted; selective queries enforce compound index; output count below invariant fails with `FAIL_RESULT_INVARIANT`. | None |
 | **S5-SCALE-01** | Reproducible live scale benchmark against dedicated disposable MongoDB (`attendance_benchmark_100k`) at scale (~100k records). | High | `benchmarks/scale_benchmark.py`, `benchmarks/benchmark_results.json` | Live run: `python benchmarks/scale_benchmark.py --confirm` | `python benchmarks/scale_benchmark.py --confirm` | **Verified** | 102,000 attendance records across 1,000 employees; all 8 scenarios achieved PASS with zero COLLSCAN; fresh artifact saved. | None |
 | **S5-REL-01** | Safe, deterministic release packaging with atomic os.replace, secret pattern exclusions (credentials.json, secrets.json, keys), missing file failures, and zip integrity checks. | High | `scripts/build_release.py`, `release_submission.zip` | `tests/test_sprint5.py::test_s5_rel_01_*`, `test_s5_reg_06_*`, `test_s5_reg_10`, `test_s5_reg_11` | `pytest tests/test_sprint5.py -k "rel or reg_06 or reg_10 or reg_11" -v` | **Verified** | Symlinks validated; atomic replacement tested under simulated failure; secrets.json/credentials.json excluded; archive integrity verified. | None |
-| **S5-TEST-01** | Complete regression suite and high test quality across unit, integration, and live database tests. | Medium | `tests/test_sprint1.py` through `tests/test_sprint5.py` | Full test suite execution | `python -m pytest tests/ -v` | **Verified** | All 162 tests passed in 9.65s with 100% pass rate. | None |
+| **S5-TEST-01** | Complete regression suite and high test quality across unit, integration, and live database tests. | Medium | `tests/test_sprint1.py` through `tests/test_sprint5.py` | Full test suite execution | `python -m pytest tests/ -v` | **Verified** | All 164 tests passed in 4.99s with 100% pass rate. | None |
 | **S5-DOC-01** | Comprehensive evidence, reproduction commands, technical rationale, and honest residual risk disclosure. | Medium | `SPRINT5_VERIFICATION.md`, `README.md`, `DECISIONS.md`, `assignment_report.md` | Document review against terminal logs | Manual & automated check | **Verified** | All documentation aligned with reproducible commands, fresh JSON results, and clean deliverables. | None |
 
 ---
@@ -39,19 +39,19 @@ Artifact saved to: [`benchmarks/benchmark_results.json`](file:///c:/Users/ayush/
 - **Target URI**: `mongodb://localhost:27017`
 - **Total Employees**: `1,000` employees across 10 departments
 - **Total Attendance Records**: `102,000` attendance logs across 140 calendar days
-- **Seeding Duration**: `5.39` seconds
+- **Seeding Duration**: `5.44` seconds
 
 ### Scenario Performance & Verification Summary
 | Scenario Name | Collection | Primary Plan | Primary Index | Lookup Stages | Lookup Collscans | Output Count | Explain Latency | Real Latency | Target SLA | Status | Decision Reason |
 |---|---|---|---|---|:---:|:---:|:---:|:---:|:---:|:---:|---|
-| `attendance_list (selective)` | `attendance_logs` | `LIMIT -> FETCH -> IXSCAN` | `emp_code_1_date_1` | None | 0 | 20 | 2 ms | 3.19 ms | $\le 50$ ms | **PASS** | Selective employee date-range query must utilize compound index and avoid primary COLLSCAN. |
-| `attendance_list (broad range)` | `attendance_logs` | `LIMIT -> FETCH -> IXSCAN` | `date_-1_emp_code_1` | None | 0 | 20 | 2 ms | 2.91 ms | $\le 50$ ms | **PASS** | Date-range query across all employees must utilize date index and avoid primary COLLSCAN. |
-| `employee_monthly (single)` | `attendance_logs` | `GROUP -> FETCH -> IXSCAN` | `emp_code_1_date_1` | None | 0 | 1 | 9 ms | 9.36 ms | $\le 50$ ms | **PASS** | Employee monthly aggregation begins with selective emp_code/date match using compound index without COLLSCAN. |
-| `department_summary (Eng)` | `employees` | `PROJECTION_SIMPLE -> FETCH -> IXSCAN` | `department_1_joined_on_1` | 1 stage (`emp_code_1_date_1`) | 0 | 1 | 157 ms | 143.83 ms | $\le 500$ ms | **PASS** | Department-filtered summary must utilize department index on employees, and indexed lookup on attendance_logs. |
-| `department_summary (Company-wide)` | `employees` | `PROJECTION_SIMPLE -> FETCH -> IXSCAN` | `joined_on_1_department_1` | 1 stage (`emp_code_1_date_1`) | 0 | 10 | 1,641 ms | 1,313.71 ms | $\le 3,000$ ms | **PASS** | Company-wide summary scans all employees (legitimate scan), but requires strict indexed lookups on attendance logs. |
-| `late_leaderboard (Company-wide)` | `attendance_logs` | `PROJECTION_SIMPLE -> FETCH -> IXSCAN` | `date_1_late_minutes_1` | 1 stage (`emp_code_1`) | 0 | 80 | 572 ms | 473.43 ms | $\le 1,000$ ms | **PASS** | Late leaderboard matches late logs via index and joins employee metadata via emp_code index with zero COLLSCAN. |
-| `late_leaderboard (Engineering)` | `attendance_logs` | `PROJECTION_SIMPLE -> FETCH -> IXSCAN` | `date_1_late_minutes_1` | 1 stage (`emp_code_1`) | 0 | 10 | 449 ms | 565.11 ms | $\le 1,000$ ms | **PASS** | Department-scoped late leaderboard filters late logs via index and performs indexed lookup into employees. |
-| `department_trend (30-day)` | `employees` | `EXPRESS_IXSCAN` | `department_1` | 2 stages (`department_1_joined_on_1`, `date_-1_emp_code_1`) | 0 | 30 | 123 ms | 150.66 ms | $\le 500$ ms | **PASS** | Department trend filters department via index and joins 30-day logs via compound index with zero COLLSCAN. |
+| `attendance_list (selective)` | `attendance_logs` | `LIMIT -> FETCH -> IXSCAN` | `emp_code_1_date_1` | None | 0 | 20 | 1 ms | 2.22 ms | $\le 50$ ms | **PASS** | Selective employee date-range query must utilize compound index and avoid primary COLLSCAN. |
+| `attendance_list (broad range)` | `attendance_logs` | `LIMIT -> FETCH -> IXSCAN` | `date_-1_emp_code_1` | None | 0 | 20 | 1 ms | 2.22 ms | $\le 50$ ms | **PASS** | Date-range query across all employees must utilize date index and avoid primary COLLSCAN. |
+| `employee_monthly (single)` | `attendance_logs` | `GROUP -> FETCH -> IXSCAN` | `emp_code_1_date_1` | None | 0 | 1 | 3 ms | 3.98 ms | $\le 50$ ms | **PASS** | Employee monthly aggregation begins with selective emp_code/date match using compound index without COLLSCAN. |
+| `department_summary (Eng)` | `employees` | `PROJECTION_SIMPLE -> FETCH -> IXSCAN` | `department_1_joined_on_1` | 1 stage (`emp_code_1_date_1`) | 0 | 1 | 83 ms | 78.01 ms | $\le 500$ ms | **PASS** | Department-filtered summary must utilize department index on employees, and indexed lookup on attendance_logs. |
+| `department_summary (Company-wide)` | `employees` | `PROJECTION_SIMPLE -> FETCH -> IXSCAN` | `joined_on_1_department_1` | 1 stage (`emp_code_1_date_1`) | 0 | 10 | 843 ms | 893.72 ms | $\le 3,000$ ms | **PASS** | Company-wide summary scans all employees (legitimate scan), but requires strict indexed lookups on attendance logs. |
+| `late_leaderboard (Company-wide)` | `attendance_logs` | `PROJECTION_SIMPLE -> FETCH -> IXSCAN` | `date_1_late_minutes_1` | 1 stage (`emp_code_1`) | 0 | 80 | 311 ms | 314.10 ms | $\le 1,000$ ms | **PASS** | Late leaderboard matches late logs via index and joins employee metadata via emp_code index with zero COLLSCAN. |
+| `late_leaderboard (Engineering)` | `attendance_logs` | `PROJECTION_SIMPLE -> FETCH -> IXSCAN` | `date_1_late_minutes_1` | 1 stage (`emp_code_1`) | 0 | 10 | 321 ms | 293.59 ms | $\le 1,000$ ms | **PASS** | Department-scoped late leaderboard filters late logs via index and performs indexed lookup into employees. |
+| `department_trend (30-day)` | `employees` | `EXPRESS_IXSCAN` | `department_1` | 2 stages (`department_1_joined_on_1`, `date_-1_emp_code_1`) | 0 | 30 | 96 ms | 85.94 ms | $\le 500$ ms | **PASS** | Department trend filters department via index and joins 30-day logs via compound index with zero COLLSCAN. |
 
 **Overall Benchmark Status**: **PASS** (Exit Code: `0`, Issues: `0`).
 
@@ -69,20 +69,21 @@ python -m pytest tests/ -v
 platform win32 -- Python 3.14.7, pytest-9.1.1, pluggy-1.6.0
 rootdir: C:\Users\ayush\Downloads\SDT_candidate_kit\candidate_kit
 configfile: pytest.ini
+testpaths: tests
 plugins: anyio-4.15.1
-collected 162 items
+collected 164 items
 
-tests/test_sprint1.py (18 tests) ..................                     [ 11%]
-tests/test_sprint2.py (49 tests) ....................................   [ 41%]
-tests/test_sprint3.py (32 tests) ................................        [ 61%]
+tests/test_sprint1.py (31 tests) ...............................         [ 18%]
+tests/test_sprint2.py (32 tests) ................................        [ 38%]
+tests/test_sprint3.py (38 tests) ......................................  [ 61%]
 tests/test_sprint4.py (31 tests) ...............................         [ 80%]
 tests/test_sprint5.py (32 tests) ................................        [100%]
 
-============================ 162 passed in 9.65s =============================
+============================ 164 passed in 4.99s =============================
 ```
 
-- **Total Test Cases**: 162
-- **Passed**: 162
+- **Total Test Cases**: 164
+- **Passed**: 164
 - **Failed**: 0
 - **Pass Rate**: 100%
 

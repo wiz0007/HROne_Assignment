@@ -75,7 +75,7 @@ Interactive API documentation (Swagger UI) is accessible at:
 All tests run against an isolated, disposable test database (`attendance_test_<uuid>`) and will automatically clean up after execution:
 
 ```bash
-# Run complete test suite with verbose output (141 tests across all Sprints)
+# Run complete test suite with verbose output (164 tests across all Sprints)
 python -m pytest -v
 
 # Byte-compile check
@@ -103,7 +103,7 @@ python scripts/build_release.py
   - Attendance punch-out (`POST /attendance/punch-out`) with temporal validation, shift window bounding, atomic closure, work hours (R4), overtime (R3), and half-day (R5) calculations.
   - Manual regularization (`PATCH /attendance/{emp_code}/{date}`) with immutable audit history, field-level diff calculation, and optimistic concurrency control.
 - **Sprint 3 (Complete)**:
-  - Monthly attendance summary (`GET /analytics/employees/{emp_code}/monthly`) backed by MongoDB aggregation pipeline.
+  - Monthly attendance summary (`GET /analytics/employees/{emp_code}/monthly`) backed by MongoDB aggregation pipeline and R8 4-decimal half-up percentage rounding.
   - Department summary (`GET /analytics/departments/summary`) with cross-collection totals, record-weighted average work hours, and zero-log headcount accounting.
   - Late-comers leaderboard (`GET /analytics/leaderboard/late`) with competition ranking (`$rank`), tie preservation at cutoff limits, and department isolation.
   - Daily department attendance trend (`GET /analytics/departments/{department}/trend`) featuring dense MongoDB-generated calendar series, point-in-time headcounts, and a 7-day trailing moving average window.
@@ -122,5 +122,5 @@ python scripts/build_release.py
   - Scenario-specific index policies and recorded decision reasons per query.
   - Overall status aggregation: any non-PASS scenario makes overall status non-PASS and process exits nonzero.
   - Automated release packaging and integrity checks via `scripts/build_release.py`.
-  - 141 automated regression tests passing across all 5 sprints; comprehensive evidence in `SPRINT5_VERIFICATION.md`.
+  - 164 automated regression tests passing across all 5 sprints; comprehensive evidence in `SPRINT5_VERIFICATION.md`.
 
