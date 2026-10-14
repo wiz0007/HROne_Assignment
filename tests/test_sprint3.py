@@ -443,8 +443,8 @@ def test_monthly_pre_joining_records_excluded(client_app: TestClient):
     # Only 2026-07-15 was late (15 mins); pre-joining 2026-07-02 (25 mins) is excluded
     assert data["late_count"] == 1
     assert data["total_late_minutes"] == 15
-    # Attendance percentage = 2.0 / 13 * 100 = 15.38%
-    assert data["attendance_pct"] == 15.38
+    # Attendance percentage = 2.0 / 13 * 100 = 15.3846% (R8: 4 decimals half-up)
+    assert data["attendance_pct"] == 15.3846
 
 
 def test_monthly_employee_joined_after_month_end(client_app: TestClient):
@@ -999,3 +999,70 @@ def test_cross_endpoint_consistency(client_app: TestClient):
     assert dept["total_late_minutes"] == m1["total_late_minutes"] + m2["total_late_minutes"]
     # Department leave_count == sum of employee leave_days
     assert dept["leave_count"] == m1["leave_days"] + m2["leave_days"]
+
+
+# --------------------------------------------------------------------------- #
+# R8 Percentage Rounding Contract & Boundary Tests
+# --------------------------------------------------------------------------- #
+def test_r8_percentage_rounding_boundaries_and_contract():
+    """
+    R8: Rates and percentages must be rounded to 4 decimal places HALF_UP.
+    Verifies exact rounding boundaries, half-up tie-breaking, and divergence from 2 decimals.
+    """
+    # 1. Canonical example: 2 / 23 * 100 = 8.69565217... -> 8.6957 (4 decimals) vs 8.70 (2 decimals)
+    canonical = (2 / 23) * 100.0
+    assert round_half_up_4(canonical) == 8.6957
+    assert round_half_up_2(canonical) == 8.70
+
+    # 2. Mid-month joiner: 2 / 13 * 100 = 15.384615... -> 15.3846 (4 decimals) vs 15.38 (2 decimals)
+    mid_joiner = (2 / 13) * 100.0
+    assert round_half_up_4(mid_joiner) == 15.3846
+    assert round_half_up_2(mid_joiner) == 15.38
+
+    # 3. Exact half-up boundary (.00005 rounds up, .000049 rounds down)
+    assert round_half_up_4(8.69565) == 8.6957
+    assert round_half_up_4(8.695649) == 8.6956
+    assert round_half_up_4(8.69564) == 8.6956
+
+    # 4. Standard edge values
+    assert round_half_up_4(None) is None
+    assert round_half_up_4(0.0) == 0.0
+    assert round_half_up_4(100.0) == 100.0
+    assert round_half_up_4(50.0) == 50.0
+
+    # 5. One third: 1 / 3 * 100 = 33.333333... -> 33.3333
+    one_third = (1 / 3) * 100.0
+    assert round_half_up_4(one_third) == 33.3333
+
+
+def test_monthly_analytics_r8_four_decimal_percentage_endpoint(client_app: TestClient):
+    """
+    Verifies live endpoint /analytics/employees/{emp_code}/monthly returns attendance_pct
+    rounded to 4 decimal places half-up, with exact float type in JSON response.
+    """
+    emp_code = "EMP_R8_TEST"
+    db.employees.insert_one({
+        "emp_code": emp_code,
+        "name": "R8 Tester",
+        "email": "r8@test.com",
+        "department": "Engineering",
+        "shift_start": "09:00",
+        "shift_end": "18:00",
+        "joined_on": "2026-07-01",
+    })
+
+    # July 2026 has 23 working days. Insert exactly 2 present days.
+    # 2 / 23 * 100 = 8.69565217... -> 8.6957
+    db.attendance_logs.insert_many([
+        {"emp_code": emp_code, "date": "2026-07-01", "status": "PRESENT", "work_hours": 9.0, "half_day": False},
+        {"emp_code": emp_code, "date": "2026-07-02", "status": "PRESENT", "work_hours": 9.0, "half_day": False},
+    ])
+
+    resp = client_app.get(f"/analytics/employees/{emp_code}/monthly?month=2026-07")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["working_days"] == 23
+    assert data["present_days"] == 2.0
+    assert data["attendance_pct"] == 8.6957
+    assert isinstance(data["attendance_pct"], float)
+

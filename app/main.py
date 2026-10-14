@@ -173,7 +173,7 @@ def compute_working_days(start_date: date, end_date: date) -> int:
 
 
 def round_half_up_2(val: Optional[float | Decimal | int]) -> Optional[float]:
-    """R8: Rounds quantities, hours, and percentages to 2 decimal places HALF_UP."""
+    """R8: Rounds quantities, days, and work hours to 2 decimal places HALF_UP."""
     if val is None:
         return None
     d = Decimal(str(val))
@@ -181,7 +181,7 @@ def round_half_up_2(val: Optional[float | Decimal | int]) -> Optional[float]:
 
 
 def round_half_up_4(val: Optional[float | Decimal | int]) -> Optional[float]:
-    """R8: Rounds rates to 4 decimal places HALF_UP."""
+    """R8: Rounds rates and percentages to 4 decimal places HALF_UP."""
     if val is None:
         return None
     d = Decimal(str(val))
@@ -993,12 +993,12 @@ def get_employee_monthly(
             total_late_minutes = 0
             total_overtime_minutes = 0
 
-        # 4. attendance_pct = present_days / working_days * 100, rounded HALF_UP to 2 decimals; return null when working_days = 0
+        # 4. attendance_pct = present_days / working_days * 100, rounded HALF_UP to 4 decimals (R8 rates/percentages); return null when working_days = 0
         if working_days == 0:
             attendance_pct = None
         else:
             raw_pct = (present_days / working_days) * 100.0
-            attendance_pct = round_half_up_2(raw_pct)
+            attendance_pct = round_half_up_4(raw_pct)
 
     return {
         "emp_code": emp_code,
