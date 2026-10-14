@@ -791,14 +791,14 @@ def test_database_safety_guards_raise_explicit_exceptions():
     from tests.conftest import assert_safe_test_database
 
     # 1. Benchmark database guard tests
-    # Non-benchmark database names must raise ValueError
-    for unsafe_db in ("attendance_db", "attendance_dev", "production", "admin", "random_db", ""):
+    # Non-approved database names (including names merely containing 'benchmark') must raise ValueError
+    for unsafe_db in ("attendance_db", "attendance_dev", "production", "admin", "random_db", "", "my_benchmark_test", "prod_benchmark"):
         with pytest.raises(ValueError, match="Safety check failed"):
             validate_safe_benchmark_database(unsafe_db)
 
-    # Valid benchmark database must not raise
+    # Valid benchmark database in exact allowlist must not raise
     validate_safe_benchmark_database("attendance_benchmark_100k")
-    validate_safe_benchmark_database("my_benchmark_test")
+    validate_safe_benchmark_database("custom_bench", allowed_dbs={"custom_bench"})
 
     # 2. Test database guard tests
     class MockDB:

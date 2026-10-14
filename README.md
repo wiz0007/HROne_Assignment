@@ -75,14 +75,17 @@ Interactive API documentation (Swagger UI) is accessible at:
 All tests run against an isolated, disposable test database (`attendance_test_<uuid>`) and will automatically clean up after execution:
 
 ```bash
-# Run complete test suite with verbose output (127 tests)
+# Run complete test suite with verbose output (141 tests across all Sprints)
 python -m pytest -v
 
 # Byte-compile check
-python -m compileall -q app tests benchmarks
+python -m compileall -q app tests benchmarks scripts
 
-# Run Sprint 4 scale & performance benchmark (~100k records)
+# Run Sprint 5 scale & performance benchmark (~100k records, requires explicit --confirm)
 python benchmarks/scale_benchmark.py --confirm
+
+# Build clean release ZIP archive (excludes .env, .git, .venv, caches)
+python scripts/build_release.py
 ```
 
 ---
@@ -112,5 +115,12 @@ python benchmarks/scale_benchmark.py --confirm
   - Plan inspection verifying index scans (`IXSCAN`) and zero collection scans (`COLLSCAN`) across 102,000 records.
   - Reproducible scale benchmark in `benchmarks/scale_benchmark.py` and saved artifact in `benchmarks/benchmark_results.json`.
   - Complete architectural decision records in `DECISIONS.md` and traceability matrix in `SPRINT4_VERIFICATION.md`.
-- **Sprint 5 (Planned)**:
-  - Final packaging, release artifact inspection, and submission audit against rubric.
+- **Sprint 5 (Complete)**:
+  - Fail-closed benchmark safety: required `--confirm` opt-in before client instantiation; exact allowlist matching (`APPROVED_BENCHMARK_DATABASES`) using explicit `ValueError` exceptions working in normal and `python -O` modes.
+  - Metric completeness: distinguish missing/null/malformed metrics from observed zero (`0`); reject missing metrics as `INCONCLUSIVE_METRICS`.
+  - Independent lookup scan enforcement: nonzero lookup collection scans fail even with scan-free primary plan.
+  - Scenario-specific index policies and recorded decision reasons per query.
+  - Overall status aggregation: any non-PASS scenario makes overall status non-PASS and process exits nonzero.
+  - Automated release packaging and integrity checks via `scripts/build_release.py`.
+  - 141 automated regression tests passing across all 5 sprints; comprehensive evidence in `SPRINT5_VERIFICATION.md`.
+
