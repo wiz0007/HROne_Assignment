@@ -36,6 +36,11 @@ FORBIDDEN_PATTERNS = [
     re.compile(r"(^|[/\\])(id_rsa|id_ed25519)($|\..*)", re.IGNORECASE),
     re.compile(r"(^|[/\\])(credentials|secrets?|passwords?|auth_token|token\.txt|service-account.*|firebase-adminsdk.*|access_token.*|\.kube)($|[/\\]|\..*)", re.IGNORECASE),
     re.compile(r".*\.zip$", re.IGNORECASE),  # Exclude all zip files to prevent self-nesting or candidate archive inclusion
+    re.compile(r"(^|[/\\])PROBLEM_STATEMENT\.docx$", re.IGNORECASE),
+    re.compile(r"(^|[/\\])SPRINT4_VERIFICATION\.md$", re.IGNORECASE),
+    re.compile(r"(^|[/\\])SPRINT5_VERIFICATION\.md$", re.IGNORECASE),
+    re.compile(r"(^|[/\\])assignment_report\.md$", re.IGNORECASE),
+    re.compile(r"(^|[/\\])assignment_progress\.md$", re.IGNORECASE),
 ]
 
 # Required files that must be present in a valid release
@@ -52,12 +57,11 @@ REQUIRED_FILES = [
     "benchmarks/benchmark_results.json",
     "requirements.txt",
     "README.md",
+    "REVIEW.md",
     "openapi.yaml",
     "DATA_MODEL.md",
     "DECISIONS.md",
-    "SPRINT4_VERIFICATION.md",
-    "SPRINT5_VERIFICATION.md",
-    "assignment_report.md",
+    "pytest.ini",
     ".env.example",
 ]
 
